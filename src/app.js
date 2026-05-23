@@ -48,13 +48,11 @@ function closePage(page) {
   currentPage = null;
   document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
 
-  // Navigate somewhere sensible instead of revealing raw library
+  // Navigate somewhere sensible instead of revealing raw library.
+  // Always fall back to 'characters' — avoids a loop when there are no
+  // accounts and the user is already on the characters page.
   window.eveAPI.getAccounts().catch(() => []).then(accounts => {
-    if (accounts && accounts.length > 0) {
-      navigateToPage('dashboard');
-    } else {
-      navigateToPage('characters');
-    }
+    navigateToPage(accounts && accounts.length > 0 ? 'dashboard' : 'characters');
   });
 }
 
@@ -139,30 +137,4 @@ function bindEvents() {
 
   // Jabber events
   bindJabberEvents();
-}
-
-// ─── bindLibraryEvents ────────────────────────────────────────────────────────
-// Called by blueprints.js navigateIndustryTab when injecting the blueprints tab UI.
-function bindLibraryEvents() {
-  const libInputs = [
-    document.getElementById('bpLibSearch'),
-    document.getElementById('bpLibMinME'),
-    document.getElementById('bpLibMinTE'),
-    document.getElementById('bpLibMinRuns'),
-  ];
-  libInputs.forEach(input => {
-    if (input) input.addEventListener('input', () => {
-      clearTimeout(searchTimer);
-      searchTimer = setTimeout(() => handleLibraryFilter(), 300);
-    });
-  });
-
-  const libFilter = document.getElementById('bpLibFilter');
-  if (libFilter) libFilter.addEventListener('change', () => handleLibraryFilter());
-
-  const libSort = document.getElementById('bpLibSort');
-  if (libSort) libSort.addEventListener('change', () => handleLibraryFilter());
-
-  const toggleBtn = document.getElementById('toggleLibraryBtn');
-  if (toggleBtn) toggleBtn.addEventListener('click', toggleLibraryView);
 }

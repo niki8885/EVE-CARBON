@@ -195,13 +195,17 @@ async function loadDashboard() {
 function renderKPIPanel(container, accounts, totalWallet, overallValue, grandTotal, totalByChar, walletByChar, assetsLoading) {
   if (!container) return;
 
-  const charData = accounts.map(acc => {
+  const TOP_N = 6;
+  const allCharData = accounts.map(acc => {
     const cid    = String(acc.characterId);
     const assets = totalByChar[cid]  || 0;
     const wallet = walletByChar[cid] || 0;
     return { acc, assets, wallet, total: assets + wallet };
-  });
-  const maxTotal = Math.max(...charData.map(c => c.total), 1);
+  }).sort((a, b) => b.total - a.total);
+
+  const charData    = allCharData.slice(0, TOP_N);
+  const hiddenCount = allCharData.length - charData.length;
+  const maxTotal    = Math.max(...charData.map(c => c.total), 1);
 
   const charBars = charData.map(({ acc, assets, wallet, total }) => {
     const assetPct  = Math.min(100, (assets / maxTotal) * 100);
@@ -281,7 +285,12 @@ function renderKPIPanel(container, accounts, totalWallet, overallValue, grandTot
       </div>
     </div>
     <div class="dash-char-bars" style="margin-bottom:20px;">
-      <div class="dash-char-bars-label">WEALTH BY CHARACTER</div>
+      <div class="dash-char-bars-label" style="display:flex;align-items:baseline;gap:8px;">
+        WEALTH BY CHARACTER
+        <span style="font-size:9px;color:var(--text-3);font-family:var(--mono);font-weight:400;letter-spacing:0.05em;">
+          TOP ${TOP_N}${hiddenCount > 0 ? ` · ${hiddenCount} more character${hiddenCount === 1 ? '' : 's'} not shown` : ''}
+        </span>
+      </div>
       ${barLegend}${charBars}
     </div>
     <div class="dash-wealth-chart-wrap">

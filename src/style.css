@@ -482,8 +482,8 @@ body { background:var(--bg-deep); color:var(--text-1); font-family:var(--font); 
 .dashboard-hero-badge { display:flex; align-items:center; gap:12px; }
 .alliance-badge { background:var(--accent); color:#000; padding:8px 14px; border-radius:999px; font-size:11px; letter-spacing:0.09em; font-weight:700; text-transform:uppercase; }
 .dashboard-main-char { font-size:14px; color:var(--text-1); font-weight:600; }
-.dashboard-grid { display:grid; grid-template-columns:1.2fr 1fr; gap:20px; align-items:flex-start; }
-.dashboard-panel { padding:18px; background:var(--bg-card); border:1px solid var(--border); border-radius:14px; min-height:220px; }
+.dashboard-grid { display:grid; grid-template-columns:1.2fr 1fr; gap:20px; align-items:start; min-width:0; }
+.dashboard-panel { padding:18px; background:var(--bg-card); border:1px solid var(--border); border-radius:14px; min-height:220px; overflow:hidden; }
 .dashboard-panel-title { font-size:13px; font-weight:700; color:var(--text-1); margin-bottom:12px; }
 .dashboard-empty { color:var(--text-2); font-size:13px; padding:18px 0; }
 .dashboard-key-metric { margin-bottom:18px; }
@@ -808,6 +808,8 @@ code { background:var(--bg-deep); border:1px solid var(--border); border-radius:
   padding: 16px 20px;
   position: relative;
   overflow: hidden;
+  flex-shrink: 0;
+  z-index: 1;
 }
 .dashboard-welcome-banner::before {
   content: '';
