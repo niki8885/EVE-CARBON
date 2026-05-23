@@ -1,21 +1,28 @@
 # EVE Carbon
-A desktop application for EVE Online players to deal with anything that might arise on a day-to-day activity in EVE online.
+Designed for serious capsuleers and industrial manufacturers, EVE-Carbon is a comprehensive desktop management tool for EVE Online. By integrating live ESI data with a local Static Data Export (SDE) database, it delivers lightning-fast recursive blueprint calculations, real-time wealth tracking, and integrated XMPP Jabber communications—all wrapped in a secure, customizable Electron interface. Whether you are scaling up capital ship production or optimizing regional supply chains, EVE-Carbon provides the critical data and organizational tools needed to dominate the industrial market.
 
-Its starting out as an industrial calculate full multi-tier material requirements for any blueprint, with ME/TE research level support.
+## 🚀 Features
 
-## Features
+* **Secure EVE SSO Integration**: Authenticate characters securely via EVE Online SSO.
+* **Blueprint Library Management**: Synchronize, browse, and organize your blueprints directly from ESI.
+* **Recursive Material Calculator**: Dynamically build multi-level manufacturing trees for any blueprint, integrating public blueprint copies via Fuzzwork.
+* **Asset & Wealth Tracking**: Track liquid wealth, active market orders, and item locations across your character roster.
+* **Built-in Jabber Client**: Connect directly to `jabber.eveonline.com` via an integrated XMPP client with director-only filtering.
+* **Local SDE Database**: Uses a local SQLite EVE Static Data Export (SDE) for lightning-fast, offline item and type lookups.
+* **Dynamic Theming**: Customizable UI with user-configurable themes saved locally.
 
-- 🔍 Live search against EVE ESI (no login required)
-- 📊 Full 4-tier material breakdown:
-  - **Tier 3** – Direct manufacturing components (Capital parts, etc.)
-  - **Tier 2** – Reaction products (Fernite Carbide, Ferrogel, etc.)
-  - **Tier 1** – Processed materials (Fernite Alloy, Ceramic Powder, etc.)
-  - **Tier 0** – Raw materials (Scandium, Vanadium, etc.)
-- ⚗️ ME/TE research level inputs with live adjustment
-- 🏭 Facility bonus support (Raitaru, Azbel, Sotiyo)
-- 💉 Implant bonus support
-- 📋 Shows adjusted qty vs base qty and ME material savings
-- Works with any blueprint: ships, capitals, structures, modules
+---
+
+## 🏗 Architecture & Tech Stack
+
+* **Framework**: [Electron](https://www.electronjs.org/) (Main and Renderer processes with Context Bridge isolation).
+* **Frontend**: Vanilla HTML/CSS/JS, utilizing dynamic CSS variables for theming.
+* **Backend / Local DB**: Node.js, `sqlite3` for local SDE queries, and local JSON storage for user profiles and caching.
+* **External APIs**: 
+  * EVE Online ESI (`https://esi.evetech.net`)
+  * EVE SSO OAuth 2.0
+  * Fuzzwork API
+  * EVE Tech Image Server
 
 ## Building the .exe
 
@@ -55,3 +62,9 @@ You can convert a PNG to ICO at https://convertio.co/png-ico/
 - All data comes from the public EVE ESI API — no API key or login needed
 - Blueprint material data may be incomplete for very new items not yet indexed by ESI
 - Reaction chains are auto-detected (manufacturing vs reaction blueprints)
+
+
+🤝 Special Thanks
+   -Fuzzworks for without Steve none of this would be possible
+   -Adam4EVE  - Station Name resolutions
+   -EVE Rift for making an incredible app, and giving me many ideas and tonnes of inspiration 
