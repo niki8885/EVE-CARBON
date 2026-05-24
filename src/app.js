@@ -106,21 +106,6 @@ function bindEvents() {
   const syncBtn = document.getElementById('syncAssetsBtn');
   if (syncBtn) syncBtn.addEventListener('click', syncAllAssets);
 
-  // Manual blueprint search
-  const bpInput = document.getElementById('bpName');
-  if (bpInput) {
-    bpInput.addEventListener('input', () => {
-      clearTimeout(manualSearchTimer);
-      manualSearchTimer = setTimeout(handleManualSearchInput, 250);
-    });
-    bpInput.addEventListener('keydown', async (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        document.querySelector('#searchDropdown .dropdown-item')?.click();
-      }
-    });
-  }
-
   // Close dropdown on outside click
   document.addEventListener('click', (e) => {
     if (!e.target.closest('.search-wrap')) {

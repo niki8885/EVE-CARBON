@@ -95,16 +95,6 @@
       </div>
     </div>
 
-    <div class="panel">
-      <div class="panel-header"><span class="panel-icon">◑</span><span>MANUAL SEARCH</span></div>
-      <div class="field-group">
-        <label class="field-label">BLUEPRINT NAME</label>
-        <div class="search-wrap">
-          <input type="text" id="bpName" class="field-input" placeholder="Type to search..." autocomplete="off"/>
-          <div id="searchDropdown" class="dropdown" style="display:none;"></div>
-        </div>
-      </div>
-    </div>
 
     <div id="selectedBpCard" class="selected-bp-card" style="display:none;">
       <img id="selectedBpIcon" src="" alt="" class="bp-card-icon"/>
@@ -163,6 +153,7 @@
       <div id="statusMsg" class="status-msg"></div>
     </div>
     <button id="openSettingsBtn" class="settings-fab" title="Open UI Settings">⚙</button>
+    <button id="openBugReportBtn" class="bug-fab" title="File a Bug Report" onclick="openBugReport()">⚠</button>
 
   </div>
 
@@ -565,6 +556,7 @@
 <script src="materials.js"></script>
 <script src="jabber.js"></script>
 <script src="dashboard.js"></script>
+<script src="bugs.js"></script>
 <!-- app.js must be last — it calls bindEvents() and DOMContentLoaded init -->
 <script src="app.js"></script>
 
