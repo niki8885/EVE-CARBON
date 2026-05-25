@@ -66,6 +66,9 @@ const PAGE_HTML = {
     </div>`,
 
   // ── Dashboard ───────────────────────────────────────────────────────────────
+  // Skeleton loaders are injected by _injectDashboardSkeletons() in dashboard.js
+  // the moment loadDashboard() is called — keep these containers empty so the
+  // shimmer appears instantly with no "Loading..." flash.
   dashboard: `
     <div id="page-dashboard" class="nav-page"
          style="flex-direction:column; height:100%; min-width:0; overflow:hidden;">
@@ -80,29 +83,20 @@ const PAGE_HTML = {
       </div>
       <div class="page-content"
            style="display:flex; flex-direction:column; gap:16px; padding:16px; overflow-y:auto;">
-        <div id="dashboardWelcomeBanner" class="dashboard-welcome-banner">
-          <div class="dashboard-welcome-inner">
-            <div class="dashboard-welcome-placeholder">
-              <span style="font-size:32px; color:var(--border-b);">&#x2B21;</span>
-            </div>
-            <div class="dashboard-welcome-text">
-              <div class="dashboard-welcome-greeting">WELCOME BACK, COMMANDER</div>
-              <div id="dashboardMainCharName" class="dashboard-welcome-name">Loading...</div>
-            </div>
-          </div>
-        </div>
+        <!-- Welcome banner — skeleton injected by _injectDashboardSkeletons(),
+             then replaced by renderBanner() once DB data is ready. -->
+        <div id="dashboardWelcomeBanner" class="dashboard-welcome-banner"></div>
+
+        <!-- Main grid — skeletons injected by _injectDashboardSkeletons(),
+             then replaced by renderKPIPanel() / renderJobsPanel(). -->
         <div id="dashboardContent" class="dashboard-grid" style="position:relative;">
           <div class="dashboard-panel" id="dashboardSummaryPanel">
             <div class="dashboard-panel-title">&#x2B21; NET WORTH &amp; WEALTH GROWTH</div>
-            <div id="dashboardNetworthSummary">
-              <div class="loading-row">Loading...</div>
-            </div>
+            <div id="dashboardNetworthSummary"></div>
           </div>
           <div class="dashboard-panel" id="dashboardJobsPanel">
             <div class="dashboard-panel-title">&#x25C8; FINISHED INDUSTRY JOBS</div>
-            <div id="dashboardJobsTable">
-              <div class="loading-row">Loading jobs...</div>
-            </div>
+            <div id="dashboardJobsTable"></div>
           </div>
         </div>
       </div>

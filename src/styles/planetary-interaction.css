@@ -2,82 +2,271 @@
    planetary-interaction.css — PI Dashboard styling
    ══════════════════════════════════════════════════════════════════ */
 
+/* ── Outer wrapper injected into #piContainer ───────────────────── */
 .pi-container {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  height: 100%;
-  overflow-y: auto;
+  gap: 14px;
 }
 
+/* ── Header row ─────────────────────────────────────────────────── */
 .pi-header-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding-bottom: 10px;
   border-bottom: 1px solid var(--border);
-  padding-bottom: 12px;
 }
 
 .pi-title {
-  font-size: 16px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text-1);
+  color: var(--text-2);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  font-family: var(--mono);
+}
+
+/* ── Filter bar — single horizontal row ─────────────────────────── */
+.pi-filter-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  height: 34px;
+  flex-shrink: 0;
+}
+
+.pi-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 1;
+  height: 100%;
+  padding: 0 10px;
+  min-width: 0;
+}
+
+.pi-filter-sep {
+  width: 1px;
+  height: 100%;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.pi-filter-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-3);
+  font-family: var(--mono);
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding-right: 6px;
+  border-right: 1px solid var(--border-b);
+  margin-right: 6px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+/* Override base.css !important rules for these specific selects */
+.pi-filter-bar select.pi-filter-select,
+.pi-filter-bar select.pi-filter-select:focus {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: var(--text-1) !important;
+  font-size: 11px !important;
+  font-family: var(--mono) !important;
+  padding: 0 4px !important;
+  height: 100% !important;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  outline: none !important;
+}
+
+.pi-filter-bar select.pi-filter-select:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Hover tint on the whole filter item */
+.pi-filter-item:focus-within {
+  background: rgba(255,255,255,0.025);
+}
+
+.pi-filter-reset {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: 10px;
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+  padding: 0 14px;
+  height: 100%;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pi-filter-reset:hover {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+/* Active filter badge */
+.pi-filter-active-badge {
+  font-size: 9px;
+  font-family: var(--mono);
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  vertical-align: middle;
+  margin-left: 6px;
   letter-spacing: 0.05em;
 }
 
-.pi-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 16px;
-}
-
-/* Planet Card */
-.pi-card {
-  background: #0c0c0c;
-  border: 1px solid #1a1a1a;
-  border-radius: var(--radius);
-  padding: 16px;
+/* ── Character section ──────────────────────────────────────────── */
+.pi-char-section {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  transition: transform 0.2s ease, border-color 0.2s ease;
+  gap: 10px;
+}
+
+.pi-char-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.pi-char-portrait {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.pi-char-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+  letter-spacing: 0.04em;
+}
+
+.pi-char-planet-count {
+  margin-left: auto;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 2px 8px;
+  border-radius: var(--radius);
+}
+
+/* ── Planet card grid ───────────────────────────────────────────── */
+.pi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+/* ── Planet card ────────────────────────────────────────────────── */
+.pi-card {
+  background: var(--bg-card-deep);
+  border: 1px solid var(--border-e);
+  border-radius: var(--radius);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: transform 0.18s ease, border-color 0.18s ease;
 }
 
 .pi-card:hover {
-  border-color: rgba(192, 57, 43, 0.35);
+  border-color: var(--accent-30);
   transform: translateY(-2px);
 }
 
 .pi-card-top {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
+}
+
+/* Planet icon + owner portrait badge */
+.pi-card-owner {
+  position: relative;
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
 }
 
 .pi-planet-render {
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: var(--bg-deep);
   border: 1px solid var(--border-b);
   object-fit: cover;
+  display: block;
 }
 
-.pi-info { flex: 1; }
+.pi-owner-portrait {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-card-deep);
+  object-fit: cover;
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+}
+
+.pi-info {
+  flex: 1;
+  min-width: 0;
+}
 
 .pi-planet-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-1);
-  margin-bottom: 2px;
+  margin-bottom: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .pi-planet-type {
-  font-size: 11px;
-  color: var(--text-2);
-  letter-spacing: 0.1em;
+  font-size: 10px;
+  color: var(--text-3);
+  letter-spacing: 0.12em;
   text-transform: uppercase;
+  font-family: var(--mono);
+}
+
+.pi-card-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  flex-shrink: 0;
 }
 
 .pi-cc-badge {
@@ -85,33 +274,90 @@
   color: var(--accent);
   font-size: 10px;
   font-family: var(--mono);
-  padding: 4px 8px;
-  border-radius: 6px;
+  padding: 3px 7px;
+  border-radius: var(--radius);
   font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
-/* Stats Section */
+/* Jump distance badge */
+.pi-jump-badge {
+  font-size: 10px;
+  font-family: var(--mono);
+  font-weight: 600;
+  padding: 3px 7px;
+  border-radius: var(--radius);
+  letter-spacing: 0.04em;
+}
+
+.pi-jump-badge.same {
+  background: rgba(39, 174, 96, 0.12);
+  color: var(--success);
+  border: 1px solid rgba(39, 174, 96, 0.25);
+}
+
+.pi-jump-badge.near-green {
+  background: rgba(39, 174, 96, 0.10);
+  color: var(--success);
+  border: 1px solid rgba(39, 174, 96, 0.22);
+}
+
+.pi-jump-badge.near-yellow {
+  background: rgba(230, 126, 34, 0.10);
+  color: var(--warning);
+  border: 1px solid rgba(230, 126, 34, 0.25);
+}
+
+.pi-jump-badge.far-red {
+  background: rgba(192, 57, 43, 0.10);
+  color: var(--danger);
+  border: 1px solid rgba(192, 57, 43, 0.25);
+}
+
+.pi-jump-badge.far {
+  background: transparent;
+  color: var(--text-3);
+  border: 1px solid var(--border);
+}
+
+/* ── Stats grid ─────────────────────────────────────────────────── */
 .pi-stats-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-  background: var(--bg-deep);
-  padding: 12px;
-  border-radius: 8px;
+  background: rgba(255,255,255,0.02);
+  padding: 10px 12px;
+  border-radius: var(--radius);
   border: 1px solid var(--border-b);
 }
 
-.pi-stat-box { display: flex; flex-direction: column; gap: 4px; }
-.pi-stat-label { font-size: 9px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.1em; }
-.pi-stat-value { font-size: 13px; color: var(--text-1); font-family: var(--mono); }
+.pi-stat-box   { display: flex; flex-direction: column; gap: 3px; }
+.pi-stat-label { font-size: 9px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.12em; font-family: var(--mono); }
+.pi-stat-value { font-size: 12px; color: var(--text-1); font-family: var(--mono); }
 
-/* Status Indicator */
-.pi-status { font-size: 11px; font-weight: 500; display: flex; align-items: center; gap: 6px; margin-top: auto; }
-.pi-status::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+/* ── Status indicator ───────────────────────────────────────────── */
+.pi-status {
+  font-size: 10px;
+  font-weight: 500;
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 
-.pi-status.active  { color: var(--success); }
-.pi-status.active::before  { background: var(--success); box-shadow: 0 0 6px var(--success); }
-.pi-status.warning { color: var(--warning); }
-.pi-status.warning::before { background: var(--warning); box-shadow: 0 0 6px var(--warning); }
-.pi-status.idle    { color: var(--text-3); }
+.pi-status::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.pi-status.active::before  { background: var(--success); box-shadow: 0 0 5px var(--success); }
+.pi-status.active          { color: var(--success); }
+.pi-status.warning::before { background: var(--warning); box-shadow: 0 0 5px var(--warning); }
+.pi-status.warning         { color: var(--warning); }
 .pi-status.idle::before    { background: var(--text-3); }
+.pi-status.idle            { color: var(--text-3); }

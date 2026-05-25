@@ -78,11 +78,125 @@ async function autoRefreshStaleCharacters(accounts) {
   }
 }
 
+// ── Skeleton HTML builders ─────────────────────────────────────────────────
+function _skelBanner() {
+  return `
+    <div class="skel-banner" id="skelBanner">
+      <!-- Portrait column -->
+      <div class="skel-banner-portrait"></div>
+      <!-- Identity column -->
+      <div class="skel-banner-body">
+        <div class="skel skel-text-xs" style="width:80px"></div>
+        <div class="skel skel-text-2xl skel-delay-1" style="width:260px"></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <div class="skel skel-text-sm skel-delay-2" style="width:140px"></div>
+          <div class="skel skel-text-sm skel-delay-3" style="width:60px;border-radius:999px"></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+          <div class="skel skel-text-sm skel-delay-2" style="width:200px"></div>
+          <div class="skel skel-text-sm skel-delay-3" style="width:170px"></div>
+          <div class="skel skel-text-sm skel-delay-4" style="width:190px"></div>
+        </div>
+      </div>
+      <!-- Extra col -->
+      <div class="skel-banner-extra">
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div class="skel skel-text-xs skel-delay-1" style="width:50px"></div>
+          <div class="skel skel-text-md skel-delay-2" style="width:100px"></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div class="skel skel-text-xs skel-delay-2" style="width:60px"></div>
+          <div class="skel skel-text-md skel-delay-3" style="width:110px"></div>
+        </div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:8px">
+          ${[1,2,3,4,5].map(i=>`<div class="skel skel-circle skel-delay-${i}" style="width:28px;height:28px"></div>`).join('')}
+        </div>
+      </div>
+      <!-- Ship col -->
+      <div class="skel-banner-ship"></div>
+    </div>`;
+}
+
+function _skelSummaryPanel() {
+  // KPI row + chart + char bars
+  const bars = [220, 180, 200, 160].map((w, i) => `
+    <div class="skel-char-row">
+      <div class="skel skel-circle skel-delay-${i+1}" style="width:26px;height:26px"></div>
+      <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+        <div class="skel skel-text-sm skel-delay-${i+1}" style="width:${w}px;max-width:100%"></div>
+        <div class="skel skel-char-bar-track skel-delay-${i+2}"></div>
+      </div>
+      <div class="skel skel-text-sm skel-delay-${i+1}" style="width:70px"></div>
+    </div>`).join('');
+
+  const chartBarHeights = [35, 55, 42, 60, 48, 52, 38, 44];
+  const chartBars = chartBarHeights.map((h, i) =>
+    `<div class="skel skel-chart-bar skel-delay-${(i%6)+1}" style="height:${h}px"></div>`
+  ).join('');
+
+  return `
+    <div>
+      <!-- KPI cards -->
+      <div class="skel-kpi-row">
+        ${[1,2,3].map(i=>`
+          <div class="skel-kpi-card">
+            <div class="skel skel-text-xs skel-delay-${i}" style="width:90px"></div>
+            <div class="skel skel-text-xl skel-delay-${i}" style="width:130px"></div>
+            <div class="skel skel-text-xs skel-delay-${i}" style="width:70px"></div>
+          </div>`).join('')}
+      </div>
+      <!-- Wealth chart -->
+      <div class="skel-chart-wrap">
+        <div class="skel skel-text-xs skel-delay-1" style="width:120px"></div>
+        <div class="skel-chart-bars">${chartBars}</div>
+      </div>
+      <!-- Character wealth bars -->
+      <div class="skel-char-bars-wrap">
+        <div class="skel skel-text-xs skel-delay-1" style="width:100px;margin-bottom:4px"></div>
+        ${bars}
+      </div>
+    </div>`;
+}
+
+function _skelJobsPanel() {
+  const rows = [1,2,3,4,5,6].map(i => `
+    <div class="skel-jobs-row">
+      <div class="skel skel-circle skel-delay-${i}" style="width:22px;height:22px;flex-shrink:0"></div>
+      <div class="skel skel-text-sm skel-delay-${i}" style="flex:1.2"></div>
+      <div class="skel skel-text-sm skel-delay-${(i%3)+1}" style="flex:0.8"></div>
+      <div class="skel skel-text-sm skel-delay-${(i%4)+1}" style="flex:0.6"></div>
+    </div>`).join('');
+  return `<div class="skel-jobs-wrap">${rows}</div>`;
+}
+
+function _injectDashboardSkeletons() {
+  const welcomeBannerEl = document.getElementById('dashboardWelcomeBanner');
+  const summaryPanelEl  = document.getElementById('dashboardNetworthSummary');
+  const jobsTableEl     = document.getElementById('dashboardJobsTable');
+
+  // Banner: inject if empty or has no real content yet
+  if (welcomeBannerEl && !document.getElementById('skelBanner') &&
+      !welcomeBannerEl.querySelector('.banner-portrait-col')) {
+    welcomeBannerEl.innerHTML = _skelBanner();
+  }
+  // Summary panel: inject if empty or still showing old loading row
+  if (summaryPanelEl && !summaryPanelEl.querySelector('.skel-kpi-row, .dash-wealth-header, .dashboard-empty')) {
+    summaryPanelEl.innerHTML = _skelSummaryPanel();
+  }
+  // Jobs table: inject if empty or still showing old loading row
+  if (jobsTableEl && !jobsTableEl.querySelector('.skel-jobs-wrap, .dashboard-jobs-list, .dashboard-empty')) {
+    jobsTableEl.innerHTML = _skelJobsPanel();
+  }
+}
+
 async function loadDashboard() {
   const summaryPanel   = document.getElementById('dashboardNetworthSummary');
   const jobsTable      = document.getElementById('dashboardJobsTable');
   const welcomeBanner  = document.getElementById('dashboardWelcomeBanner');
   const mainCharLabel  = document.getElementById('dashboardMainCharName');
+
+  // ── Inject shimmer skeletons immediately so there's no blank flash ─────────
+  if (!_dashboardLoading) _injectDashboardSkeletons();
 
   // Render from cache immediately if available
   try {

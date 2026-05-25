@@ -1,4 +1,3 @@
-require('dotenv').config();
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const https = require('https');
@@ -7,6 +6,16 @@ const crypto = require('crypto');
 const fs = require('fs');
 const createLocator      = require('./src/locator');
 const charInfoDb         = require('./src/character_info_db');
+
+// Load environment variables from .env file in both development and production.
+const envPath = app.isPackaged
+  ? path.join(process.resourcesPath, '.env')
+  : path.join(__dirname, '.env');
+require('dotenv').config({ path: envPath });
+
+// Global reference to the window object, if you don't, the window will
+// be closed automatically when the JavaScript object is garbage collected.
+let mainWindow;
 
 if (typeof globalThis.crypto !== 'object' || typeof globalThis.crypto.randomUUID !== 'function') {
   globalThis.crypto = globalThis.crypto || {};
@@ -154,7 +163,11 @@ function getLocator() {
 app.whenReady().then(async () => {
   initPaths();
   await initSde();
-  await charInfoDb.initCharacterDb(appDataDir);
+  try {
+    await charInfoDb.initCharacterDb(appDataDir);
+  } catch (e) {
+    console.error('[charInfoDb] init failed, continuing:', e.message);
+  }
   createWindow();
 });
 
@@ -386,15 +399,16 @@ function createWindow() {
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#070b14', symbolColor: '#ab7ab8', height: 32 },
     webPreferences: {
-      // 1. Update preload path to look inside 'src'
-      preload: path.join(__dirname, 'src', 'preload.js'), 
+      preload: path.join(__dirname, 'src', 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     }
   });
 
+  // ADD THIS — remove once issue is resolved
+  win.webContents.openDevTools();
+
   const url = require('url');
-  // 2. Update html path to look inside 'src'
   win.loadURL(url.format({
     pathname: path.join(__dirname, 'src', 'index.html'),
     protocol: 'file:',
