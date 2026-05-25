@@ -601,6 +601,9 @@ function navigateIndustryTab(tab) {
         }
       });
     }
+  } else if (tab === 'cost-index') {
+    renderCostIndex(right);
+
   } else if (tab === 'ore') {
     renderOreCalculator(right);
 
@@ -613,7 +616,7 @@ function navigateIndustryTab(tab) {
   } else {
     const labels = {
       'active-jobs': 'Active Jobs', 'calculator': 'Blueprint Calculator',
-      'cost-index': 'Cost Index', 'shopping-lists': 'Shopping Lists',
+      'shopping-lists': 'Shopping Lists',
       'invention': 'Invention Buddy', 'reactions': 'Reactions Profit',
       'moon': 'Moon Scanning Reformatter',
     };
