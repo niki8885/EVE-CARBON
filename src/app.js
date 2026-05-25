@@ -5,6 +5,10 @@
 //   blueprints.js, materials.js, jabber.js, dashboard.js
 
 window.addEventListener('DOMContentLoaded', async () => {
+  // Wait for pageLoader.js to inject all page fragments into #navPagesContainer
+  // before any code tries to query #page-* elements or bind navigation.
+  if (window.__pagesReady) await window.__pagesReady;
+
   // Hide any legacy setup screens
   const setupScreen = document.querySelector('.setup-container, #setup-screen, .client-id-gate');
   if (setupScreen) setupScreen.style.display = 'none';

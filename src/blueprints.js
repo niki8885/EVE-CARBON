@@ -3,6 +3,10 @@
 // 'get-all-blueprints-from-db' IPC handler.
 // The View button queries SDE materials and applies the blueprint's real ME/TE.
 
+// NOTE: allLibBPs, filterPerfectOnly, searchTimer, manualSearchTimer,
+// currentIndustryTab, selectedBpTypeId, selectedME, selectedTE, and ESI_IMAGE
+// are all declared in state.js which loads before this file. Do not re-declare them here.
+
 // ─── Load & filter ────────────────────────────────────────────────────────────
 
 async function loadBlueprintLibrary() {
@@ -332,11 +336,15 @@ async function openBlueprintDetail(bp) {
 
   // Full calculator button
   document.getElementById('bpCalcBtn')?.addEventListener('click', async () => {
-    selectedBpTypeId = bp.type_id;
-    selectedME = bp.me;
-    selectedTE = bp.te;
+    if (typeof selectedBpTypeId !== 'undefined') selectedBpTypeId = bp.type_id;
+    if (typeof selectedME      !== 'undefined') selectedME       = bp.me;
+    if (typeof selectedTE      !== 'undefined') selectedTE       = bp.te;
     showToast('Opening full calculator…', 'info');
-    await openMaterialsInTab(bp.type_id);
+    if (typeof openMaterialsInTab === 'function') {
+      await openMaterialsInTab(bp.type_id);
+    } else {
+      navigateIndustryTab('calculator');
+    }
   });
 
   // Component tree toggle
@@ -593,12 +601,17 @@ function navigateIndustryTab(tab) {
         }
       });
     }
+  } else if (tab === 'ore') {
+    renderOreCalculator(right);
+
+  } else if (tab === 'ice') {
+    renderIceCalculator(right);
+
   } else {
     const labels = {
       'active-jobs': 'Active Jobs', 'calculator': 'Blueprint Calculator',
       'cost-index': 'Cost Index', 'shopping-lists': 'Shopping Lists',
       'invention': 'Invention Buddy', 'reactions': 'Reactions Profit',
-      'ore': 'Ore Calculator', 'ice': 'Ice Calculator',
       'gas': 'Gas Calculator', 'moon': 'Moon Scanning Reformatter',
     };
     right.innerHTML = `
@@ -613,3 +626,768 @@ function navigateIndustryTab(tab) {
 // ─── Stubs (prevent crashes) ──────────────────────────────────────────────────
 function buildCategoryBrowse()        { console.log('Category build stub'); }
 function handleBlueprintSearch(query) { console.log('Search stub:', query); }
+// handleManualSearchInput is expected to be defined in the search/calculator module.
+// This fallback prevents a ReferenceError if it hasn't loaded yet.
+if (typeof handleManualSearchInput === 'undefined') {
+  window.handleManualSearchInput = function() {
+    console.warn('handleManualSearchInput not yet loaded — search module missing?');
+  };
+}
+// ─── Ore Calculator ───────────────────────────────────────────────────────────
+// Mirrors the Fuzzwork ore/M3 page:
+//   - Pulls Jita 4-4 sell prices for all minerals via the existing getJitaPrices IPC
+//   - Displays ore refine yields, ISK/M3, ISK/unit, and raw ore sell price
+//   - Lets the user adjust refining efficiency and tax
+//   - Sortable columns
+//   - Groups: Highsec / Lowsec & Null / Ice (ore only here; ice has its own tab)
+
+// ── Ore data ─────────────────────────────────────────────────────────────────
+// typeId matches ESI / SDE. Mineral yields are the base per-100-unit batch.
+// volume = m³ per unit.  batchSize = units needed to refine (standard is 100).
+
+const ORE_DATA = [
+  // ── Highsec ──────────────────────────────────────────────────────────────
+  {
+    name:'Veldspar',    typeId:1230,  group:'Highsec',  volume:0.1,  batchSize:100,
+    minerals:{ Tritanium:400 }
+  },
+  {
+    name:'Scordite',    typeId:1228,  group:'Highsec',  volume:0.15, batchSize:100,
+    minerals:{ Tritanium:150, Pyerite:90 }
+  },
+  {
+    name:'Pyroxeres',   typeId:1224,  group:'Highsec',  volume:0.3,  batchSize:100,
+    minerals:{ Pyerite:90, Mexallon:30 }
+  },
+  {
+    name:'Plagioclase', typeId:18,    group:'Highsec',  volume:0.35, batchSize:100,
+    minerals:{ Tritanium:175, Mexallon:70 }
+  },
+  // ── Lowsec ───────────────────────────────────────────────────────────────
+  {
+    name:'Omber',       typeId:1227,  group:'Lowsec',   volume:0.6,  batchSize:100,
+    minerals:{ Pyerite:90, Isogen:75 }
+  },
+  {
+    name:'Kernite',     typeId:20,    group:'Lowsec',   volume:1.2,  batchSize:100,
+    minerals:{ Mexallon:60, Isogen:120 }
+  },
+  // ── Nullsec / 0.0 ────────────────────────────────────────────────────────
+  {
+    name:'Jaspet',      typeId:1226,  group:'Nullsec',  volume:2,    batchSize:100,
+    minerals:{ Mexallon:150, Nocxium:50 }
+  },
+  {
+    name:'Hemorphite',  typeId:1229,  group:'Nullsec',  volume:3,    batchSize:100,
+    minerals:{ Isogen:240, Nocxium:90 }
+  },
+  {
+    name:'Hedbergite',  typeId:21,    group:'Nullsec',  volume:3,    batchSize:100,
+    minerals:{ Pyerite:450, Nocxium:120 }
+  },
+  {
+    name:'Gneiss',      typeId:1229,  group:'Nullsec',  volume:5,    batchSize:100,
+    minerals:{ Pyerite:2000, Mexallon:1500, Isogen:800 }
+  },
+  // NOTE: Gneiss typeId in SDE is 1229 — same number is used for Hemorphite above.
+  // If prices appear wrong for Gneiss, override ORE_SELL_IDS['Gneiss'] to the correct
+  // compressed variant ID once confirmed from your local SDE copy.
+  {
+    name:'Dark Ochre',  typeId:1232,  group:'Nullsec',  volume:8,    batchSize:100,
+    minerals:{ Mexallon:1360, Isogen:1200, Nocxium:320 }
+  },
+  {
+    name:'Crokite',     typeId:1225,  group:'Nullsec',  volume:16,   batchSize:100,
+    minerals:{ Pyerite:800, Mexallon:2000, Nocxium:800 }
+  },
+  {
+    name:'Spodumain',   typeId:19,    group:'Nullsec',  volume:16,   batchSize:100,
+    minerals:{ Tritanium:48000, Isogen:1000, Nocxium:160, Zydrine:80, Megacyte:40 }
+  },
+  {
+    name:'Bistot',      typeId:1223,  group:'Nullsec',  volume:16,   batchSize:100,
+    minerals:{ Pyerite:3200, Mexallon:1200, Zydrine:160 }
+  },
+  {
+    name:'Arkonor',     typeId:22,    group:'Nullsec',  volume:16,   batchSize:100,
+    minerals:{ Pyerite:3200, Mexallon:1200, Megacyte:120 }
+  },
+  {
+    name:'Mercoxit',    typeId:11396, group:'Nullsec',  volume:40,   batchSize:100,
+    minerals:{ Morphite:140 }
+  },
+];
+
+// Mineral type IDs (Jita prices fetched for these)
+const MINERAL_IDS = {
+  Tritanium: 34,
+  Pyerite:   35,
+  Mexallon:  36,
+  Isogen:    37,
+  Nocxium:   38,
+  Zydrine:   39,
+  Megacyte:  40,
+  Morphite:  11399,
+};
+
+// Ore raw sell type IDs so we can show "sell raw" price too
+// Most ores share the compressed variant IDs but we just need the base ore for now
+// ⚠ Gneiss and Hemorphite both resolve to 1229 in the user's data — this is a known
+//   collision. The EVE SDE base typeId for Gneiss is 1229 (Hemorphite) vs 1229.
+//   TODO: verify from your local SDE and replace Gneiss:1229 with the correct ID.
+const ORE_SELL_IDS = {
+  Veldspar:1230, Scordite:1228, Pyroxeres:1224, Plagioclase:18,
+  Omber:1227, Kernite:20, Jaspet:1226, Hemorphite:1229,
+  Hedbergite:21, Gneiss:1229 /* ⚠ verify ID */, 'Dark Ochre':1232, Crokite:1225,
+  Spodumain:19, Bistot:1223, Arkonor:22, Mercoxit:11396,
+};
+
+// ── State for the ore calculator ─────────────────────────────────────────────
+let _oreRefineEff  = 72.36;   // % – the Fuzzwork default (perfect skills no implant)
+let _oreTaxRate    = 5;        // %
+let _oreSort       = { col: 'iskM3', dir: -1 };
+let _orePrices     = {};       // typeId → { sell, buy }
+let _oreLoading    = false;
+
+async function renderOreCalculator(container) {
+  container.innerHTML = `
+    <div id="oreCalcWrap" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
+      <!-- toolbar -->
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+                  padding:12px 16px;border-bottom:1px solid var(--border);
+                  background:var(--bg-card);flex-shrink:0;">
+        <span style="font-family:var(--mono);font-size:11px;color:var(--text-3);
+                     letter-spacing:0.1em;">ORE CALCULATOR · JITA 4-4</span>
+        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;">
+          <label style="font-size:12px;color:var(--text-2);font-family:var(--mono);">REFINE EFF %</label>
+          <input id="oreRefineEff" type="number" min="0" max="100" step="0.01"
+                 value="${_oreRefineEff}"
+                 class="field-input" style="width:76px;padding:5px 8px;font-size:12px;"
+                 title="Refining efficiency (perfect skills + T2 implant ≈ 82.5%, NPC station max = 72.36%)"/>
+          <label style="font-size:12px;color:var(--text-2);font-family:var(--mono);">TAX %</label>
+          <input id="oreTaxRate" type="number" min="0" max="100" step="0.1"
+                 value="${_oreTaxRate}"
+                 class="field-input" style="width:58px;padding:5px 8px;font-size:12px;"/>
+          <button id="oreRefreshBtn" class="icon-btn"
+                  style="padding:5px 12px;font-size:12px;">⟳ REFRESH</button>
+        </div>
+        <div id="orePriceAge" style="font-size:10px;color:var(--text-3);font-family:var(--mono);"></div>
+      </div>
+
+      <!-- mineral price strip -->
+      <div id="oreMineralStrip" style="display:flex;gap:0;border-bottom:1px solid var(--border);
+           background:var(--bg-panel);flex-shrink:0;overflow-x:auto;">
+        ${Object.keys(MINERAL_IDS).map(m => `
+          <div style="padding:6px 14px;border-right:1px solid var(--border);white-space:nowrap;">
+            <div style="font-size:9px;color:var(--text-3);font-family:var(--mono);letter-spacing:0.08em;">${m.toUpperCase()}</div>
+            <div id="mPrice_${m}" style="font-size:11px;color:var(--accent);font-family:var(--mono);">…</div>
+          </div>`).join('')}
+      </div>
+
+      <!-- table -->
+      <div style="flex:1;overflow-y:auto;">
+        <table id="oreTable" style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="border-bottom:2px solid var(--border);background:var(--bg-card);
+                       position:sticky;top:0;z-index:1;">
+              <th class="ore-th" data-col="group"   style="text-align:left;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">GROUP ↕</th>
+              <th class="ore-th" data-col="name"    style="text-align:left;padding:10px 8px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">ORE ↕</th>
+              <th class="ore-th" data-col="vol"     style="text-align:right;padding:10px 8px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">M³/UNIT ↕</th>
+              <th style="text-align:right;padding:10px 8px;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">MINERALS / BATCH</th>
+              <th class="ore-th" data-col="iskUnit" style="text-align:right;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">REFINE ISK/UNIT ↕</th>
+              <th class="ore-th" data-col="iskM3"   style="text-align:right;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;color:var(--accent);">REFINE ISK/M³ ↕</th>
+              <th class="ore-th" data-col="sellRaw" style="text-align:right;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">RAW SELL/UNIT ↕</th>
+              <th class="ore-th" data-col="sellM3"  style="text-align:right;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">RAW SELL/M³ ↕</th>
+            </tr>
+          </thead>
+          <tbody id="oreTableBody">
+            <tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-3);
+                font-family:var(--mono);font-size:12px;">⬡ Fetching Jita prices…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="padding:8px 16px;border-top:1px solid var(--border);background:var(--bg-card);
+                  font-size:10px;color:var(--text-3);font-family:var(--mono);flex-shrink:0;">
+        Prices from Jita 4-4 CNAP (5% sell orders). Refine ISK assumes perfect skills with your efficiency setting.
+        Raw sell price = sell a single unit directly on the market.
+      </div>
+    </div>`;
+
+  // Bind toolbar controls
+  document.getElementById('oreRefineEff').addEventListener('change', e => {
+    _oreRefineEff = parseFloat(e.target.value) || 72.36;
+    buildOreTable();
+  });
+  document.getElementById('oreTaxRate').addEventListener('change', e => {
+    _oreTaxRate = parseFloat(e.target.value) || 5;
+    buildOreTable();
+  });
+  document.getElementById('oreRefreshBtn').addEventListener('click', () => loadOrePrices());
+
+  // Sortable column headers
+  document.querySelectorAll('#oreCalcWrap .ore-th').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (_oreSort.col === col) _oreSort.dir *= -1;
+      else { _oreSort.col = col; _oreSort.dir = -1; }
+      buildOreTable();
+    });
+  });
+
+  await loadOrePrices();
+}
+
+async function loadOrePrices() {
+  if (_oreLoading) return;
+  _oreLoading = true;
+  const refreshBtn = document.getElementById('oreRefreshBtn');
+  if (refreshBtn) refreshBtn.disabled = true;
+
+  try {
+    // Collect all type IDs we need prices for: minerals + raw ores
+    const mineralIds = Object.values(MINERAL_IDS);
+    const oreIds     = Object.values(ORE_SELL_IDS);
+    const allIds     = [...new Set([...mineralIds, ...oreIds])];
+
+    const raw = await window.eveAPI.getJitaPrices(allIds);
+    _orePrices = raw || {};
+
+    // Update mineral price strip
+    for (const [mName, mId] of Object.entries(MINERAL_IDS)) {
+      const el = document.getElementById(`mPrice_${mName}`);
+      if (!el) continue;
+      const p = _orePrices[mId];
+      el.textContent = p?.sell > 0 ? formatNumber(p.sell) + ' ISK' : '—';
+    }
+
+    const ageEl = document.getElementById('orePriceAge');
+    if (ageEl) ageEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+
+    buildOreTable();
+  } catch (err) {
+    logToConsole(`Ore prices fetch failed: ${err.message}`, 'error');
+    const body = document.getElementById('oreTableBody');
+    if (body) body.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;
+      color:var(--danger);font-family:var(--mono);font-size:12px;">
+      ⚠ Failed to fetch prices: ${escHtml(err.message)}</td></tr>`;
+  } finally {
+    _oreLoading = false;
+    const btn = document.getElementById('oreRefreshBtn');
+    if (btn) btn.disabled = false;
+  }
+}
+
+function calcOreRow(ore) {
+  const effFactor  = (_oreRefineEff / 100);
+  const taxFactor  = 1 - (_oreTaxRate / 100);
+  const batchM3    = ore.batchSize * ore.volume;
+
+  // Mineral value for one batch after refining efficiency + tax
+  let batchMineralISK = 0;
+  for (const [mName, baseQty] of Object.entries(ore.minerals)) {
+    const mId    = MINERAL_IDS[mName];
+    const p      = _orePrices[mId];
+    const price  = p?.sell > 0 ? p.sell : (p?.buy || 0);
+    const actual = Math.floor(baseQty * effFactor);   // EVE floors refined minerals
+    batchMineralISK += actual * price * taxFactor;
+  }
+
+  const iskPerUnit = batchMineralISK / ore.batchSize;
+  const iskPerM3   = iskPerUnit / ore.volume;
+
+  // Raw ore sell price (per unit)
+  const rawId       = ORE_SELL_IDS[ore.name];
+  const rawP        = _orePrices[rawId];
+  const rawSellUnit = rawP?.sell > 0 ? rawP.sell : (rawP?.buy || 0);
+  const rawSellM3   = rawSellUnit / ore.volume;
+
+  return { iskPerUnit, iskPerM3, rawSellUnit, rawSellM3 };
+}
+
+function buildOreTable() {
+  const body = document.getElementById('oreTableBody');
+  if (!body) return;
+
+  // Compute values for every ore, attach for sorting
+  const rows = ORE_DATA.map(ore => {
+    const { iskPerUnit, iskPerM3, rawSellUnit, rawSellM3 } = calcOreRow(ore);
+    return { ore, iskPerUnit, iskPerM3, rawSellUnit, rawSellM3 };
+  });
+
+  // Sort
+  const col = _oreSort.col;
+  const dir = _oreSort.dir;
+  rows.sort((a, b) => {
+    let va, vb;
+    if      (col === 'name')    { va = a.ore.name;  vb = b.ore.name; return dir * va.localeCompare(vb); }
+    else if (col === 'group')   { va = a.ore.group; vb = b.ore.group; return dir * va.localeCompare(vb); }
+    else if (col === 'vol')     { va = a.ore.volume; vb = b.ore.volume; }
+    else if (col === 'iskUnit') { va = a.iskPerUnit; vb = b.iskPerUnit; }
+    else if (col === 'iskM3')   { va = a.iskPerM3;   vb = b.iskPerM3; }
+    else if (col === 'sellRaw') { va = a.rawSellUnit; vb = b.rawSellUnit; }
+    else if (col === 'sellM3')  { va = a.rawSellM3;  vb = b.rawSellM3; }
+    else                        { va = a.iskPerM3;   vb = b.iskPerM3; }
+    return dir * (va - vb);
+  });
+
+  // Find max ISK/M3 for a visual bar
+  const maxIskM3 = Math.max(...rows.map(r => r.iskPerM3), 1);
+
+  // Group colour chips
+  const groupColors = { Highsec: '#4ecbb0', Lowsec: '#e3a84d', Nullsec: '#c05c7e' };
+
+  body.innerHTML = rows.map((r, i) => {
+    const { ore, iskPerUnit, iskPerM3, rawSellUnit, rawSellM3 } = r;
+    const gc    = groupColors[ore.group] || 'var(--text-3)';
+    const barW  = Math.round((iskPerM3 / maxIskM3) * 100);
+    const isTop = i === 0;
+
+    // Compact mineral yield summary
+    const minSummary = Object.entries(ore.minerals).map(([mn, qty]) => {
+      const actual = Math.floor(qty * (_oreRefineEff / 100));
+      return `<span style="color:var(--text-2);">${mn.substring(0,3)}:</span>`
+           + `<span style="color:var(--text-1);"> ${formatNumber(actual)}</span>`;
+    }).join(' &nbsp;');
+
+    return `
+      <tr style="border-bottom:1px solid var(--border);
+                 background:${isTop ? 'rgba(255,255,255,0.03)' : 'transparent'};
+                 ${isTop ? 'outline:1px solid var(--accent);' : ''}">
+        <td style="padding:10px 14px;white-space:nowrap;">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;
+                       background:${gc};margin-right:6px;vertical-align:middle;"></span>
+          <span style="font-family:var(--mono);font-size:10px;color:${gc};">${ore.group}</span>
+        </td>
+        <td style="padding:10px 8px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <img src="https://images.evetech.net/types/${ore.typeId}/icon?size=32"
+                 onerror="this.onerror=null;this.style.display='none';"
+                 style="width:24px;height:24px;border-radius:3px;border:1px solid var(--border);flex-shrink:0;">
+            <span style="color:var(--text-1);font-weight:600;">${escHtml(ore.name)}</span>
+          </div>
+        </td>
+        <td style="padding:10px 8px;text-align:right;font-family:var(--mono);color:var(--text-2);">
+          ${ore.volume.toFixed(2)}
+        </td>
+        <td style="padding:10px 8px;text-align:right;font-family:var(--mono);font-size:10px;color:var(--text-3);">
+          ${minSummary}
+        </td>
+        <td style="padding:10px 14px;text-align:right;font-family:var(--mono);
+                   color:${iskPerUnit > rawSellUnit ? 'var(--success)' : 'var(--text-2)'};">
+          ${iskPerUnit > 0 ? formatNumber(iskPerUnit) : '—'}
+        </td>
+        <td style="padding:10px 14px;text-align:right;">
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+            <div style="width:60px;height:4px;background:var(--bg-card);border-radius:2px;overflow:hidden;flex-shrink:0;">
+              <div style="height:100%;width:${barW}%;background:${isTop ? 'var(--accent)' : 'var(--text-3)'};border-radius:2px;"></div>
+            </div>
+            <span style="font-family:var(--mono);font-weight:700;
+                         color:${isTop ? 'var(--accent)' : 'var(--text-1)'};">
+              ${iskPerM3 > 0 ? formatNumber(iskPerM3) : '—'}
+            </span>
+          </div>
+        </td>
+        <td style="padding:10px 14px;text-align:right;font-family:var(--mono);
+                   color:${rawSellUnit > iskPerUnit ? 'var(--success)' : 'var(--text-2)'};">
+          ${rawSellUnit > 0 ? formatNumber(rawSellUnit) : '—'}
+        </td>
+        <td style="padding:10px 14px;text-align:right;font-family:var(--mono);color:var(--text-2);">
+          ${rawSellM3 > 0 ? formatNumber(rawSellM3) : '—'}
+        </td>
+      </tr>`;
+  }).join('');
+}
+// ─── Ice Calculator ───────────────────────────────────────────────────────────
+// Mirrors Fuzzwork's ice/M3 page:
+//   - All 24 ice types (base + compressed) with correct Fuzzwork yields
+//   - Pulls Jita 4-4 sell prices for all 7 ice products via getJitaPrices IPC
+//   - ISK/M³ (primary sort, mini bar chart), ISK/unit, raw sell/unit, raw sell/M³
+//   - Product price strip at the top
+//   - Refining efficiency % (default 72.36%) and tax % (default 5%)
+//   - Sortable columns, colour-coded groups, Refresh button
+//   - Raw sell > refine cells highlighted green
+
+// ── Ice product type IDs ──────────────────────────────────────────────────────
+const ICE_PRODUCT_IDS = {
+  'Heavy Water':          16272,
+  'Liquid Ozone':         16273,
+  'Helium Isotopes':      16274,
+  'Strontium Clathrates': 16275,
+  'Hydrogen Isotopes':    17889,
+  'Oxygen Isotopes':      17887,
+  'Nitrogen Isotopes':    17888,
+};
+
+// ── Ice data — yields per single unit refined (batchSize = 1 for all ice) ────
+// Volumes and yields match the Fuzzwork table exactly.
+// group: Highsec / Lowsec / Nullsec / Wormhole / Compressed
+const ICE_DATA = [
+  // ── Highsec ──────────────────────────────────────────────────────────────
+  {
+    name: 'Clear Icicle',    typeId: 16262, group: 'Highsec',  volume: 1000, batchSize: 1,
+    products: { 'Heavy Water': 69, 'Liquid Ozone': 35, 'Helium Isotopes': 414, 'Strontium Clathrates': 1 },
+  },
+  {
+    name: 'Glacial Mass',    typeId: 16263, group: 'Highsec',  volume: 1000, batchSize: 1,
+    products: { 'Heavy Water': 69, 'Liquid Ozone': 35, 'Hydrogen Isotopes': 414, 'Strontium Clathrates': 1 },
+  },
+  {
+    name: 'Blue Ice',        typeId: 16264, group: 'Highsec',  volume: 1000, batchSize: 1,
+    products: { 'Heavy Water': 69, 'Liquid Ozone': 35, 'Oxygen Isotopes': 414, 'Strontium Clathrates': 1 },
+  },
+  {
+    name: 'White Glaze',     typeId: 16265, group: 'Highsec',  volume: 1000, batchSize: 1,
+    products: { 'Heavy Water': 69, 'Liquid Ozone': 35, 'Nitrogen Isotopes': 414, 'Strontium Clathrates': 1 },
+  },
+  // ── Lowsec / Null ─────────────────────────────────────────────────────────
+  {
+    name: 'Glare Crust',     typeId: 16266, group: 'Lowsec',   volume: 1000, batchSize: 1,
+    products: { 'Heavy Water': 1381, 'Liquid Ozone': 691, 'Strontium Clathrates': 35 },
+  },
+  {
+    name: 'Dark Glitter',    typeId: 16267, group: 'Lowsec',   volume: 1000, batchSize: 1,
+    products: { 'Heavy Water': 691, 'Liquid Ozone': 1381, 'Strontium Clathrates': 69 },
+  },
+  {
+    name: 'Gelidus',         typeId: 16268, group: 'Lowsec',   volume: 1000, batchSize: 1,
+    products: { 'Heavy Water': 345, 'Liquid Ozone': 691, 'Strontium Clathrates': 104 },
+  },
+  {
+    name: 'Krystallos',      typeId: 16269, group: 'Lowsec',   volume: 1000, batchSize: 1,
+    products: { 'Heavy Water': 173, 'Liquid Ozone': 691, 'Strontium Clathrates': 173 },
+  },
+  // ── Improved variants (Highsec enhanced) ─────────────────────────────────
+  {
+    name: 'Thick Blue Ice',           typeId: 17975, group: 'Highsec+', volume: 1000, batchSize: 1,
+    products: { 'Heavy Water': 104, 'Liquid Ozone': 55, 'Oxygen Isotopes': 483, 'Strontium Clathrates': 1 },
+  },
+  {
+    name: 'Pristine White Glaze',     typeId: 17976, group: 'Highsec+', volume: 1000, batchSize: 1,
+    products: { 'Heavy Water': 104, 'Liquid Ozone': 55, 'Nitrogen Isotopes': 483, 'Strontium Clathrates': 1 },
+  },
+  {
+    name: 'Smooth Glacial Mass',      typeId: 17977, group: 'Highsec+', volume: 1000, batchSize: 1,
+    products: { 'Heavy Water': 104, 'Liquid Ozone': 55, 'Hydrogen Isotopes': 483, 'Strontium Clathrates': 1 },
+  },
+  {
+    name: 'Enriched Clear Icicle',    typeId: 17978, group: 'Highsec+', volume: 1000, batchSize: 1,
+    products: { 'Heavy Water': 104, 'Liquid Ozone': 55, 'Helium Isotopes': 483, 'Strontium Clathrates': 1 },
+  },
+  // ── Compressed ───────────────────────────────────────────────────────────
+  {
+    name: 'Compressed Blue Ice',              typeId: 28433, group: 'Compressed', volume: 100, batchSize: 1,
+    products: { 'Heavy Water': 69, 'Liquid Ozone': 35, 'Oxygen Isotopes': 414, 'Strontium Clathrates': 1 },
+  },
+  {
+    name: 'Compressed Clear Icicle',          typeId: 28443, group: 'Compressed', volume: 100, batchSize: 1,
+    products: { 'Heavy Water': 69, 'Liquid Ozone': 35, 'Helium Isotopes': 414, 'Strontium Clathrates': 1 },
+  },
+  {
+    name: 'Compressed Dark Glitter',          typeId: 28444, group: 'Compressed', volume: 100, batchSize: 1,
+    products: { 'Heavy Water': 691, 'Liquid Ozone': 1381, 'Strontium Clathrates': 69 },
+  },
+  {
+    name: 'Compressed Enriched Clear Icicle', typeId: 28445, group: 'Compressed', volume: 100, batchSize: 1,
+    products: { 'Heavy Water': 104, 'Liquid Ozone': 55, 'Helium Isotopes': 483, 'Strontium Clathrates': 1 },
+  },
+  {
+    name: 'Compressed Gelidus',               typeId: 28446, group: 'Compressed', volume: 100, batchSize: 1,
+    products: { 'Heavy Water': 345, 'Liquid Ozone': 691, 'Strontium Clathrates': 104 },
+  },
+  {
+    name: 'Compressed Glacial Mass',          typeId: 28447, group: 'Compressed', volume: 100, batchSize: 1,
+    products: { 'Heavy Water': 69, 'Liquid Ozone': 35, 'Hydrogen Isotopes': 414, 'Strontium Clathrates': 1 },
+  },
+  {
+    name: 'Compressed Glare Crust',           typeId: 28448, group: 'Compressed', volume: 100, batchSize: 1,
+    products: { 'Heavy Water': 1381, 'Liquid Ozone': 691, 'Strontium Clathrates': 35 },
+  },
+  {
+    name: 'Compressed Krystallos',            typeId: 28449, group: 'Compressed', volume: 100, batchSize: 1,
+    products: { 'Heavy Water': 173, 'Liquid Ozone': 691, 'Strontium Clathrates': 173 },
+  },
+  {
+    name: 'Compressed Pristine White Glaze',  typeId: 28450, group: 'Compressed', volume: 100, batchSize: 1,
+    products: { 'Heavy Water': 104, 'Liquid Ozone': 55, 'Nitrogen Isotopes': 483, 'Strontium Clathrates': 1 },
+  },
+  {
+    name: 'Compressed Smooth Glacial Mass',   typeId: 28451, group: 'Compressed', volume: 100, batchSize: 1,
+    products: { 'Heavy Water': 104, 'Liquid Ozone': 55, 'Hydrogen Isotopes': 483, 'Strontium Clathrates': 1 },
+  },
+  {
+    name: 'Compressed Thick Blue Ice',        typeId: 28452, group: 'Compressed', volume: 100, batchSize: 1,
+    products: { 'Heavy Water': 104, 'Liquid Ozone': 55, 'Oxygen Isotopes': 483, 'Strontium Clathrates': 1 },
+  },
+  {
+    name: 'Compressed White Glaze',           typeId: 28453, group: 'Compressed', volume: 100, batchSize: 1,
+    products: { 'Heavy Water': 69, 'Liquid Ozone': 35, 'Nitrogen Isotopes': 414, 'Strontium Clathrates': 1 },
+  },
+];
+
+// Raw sell type IDs for ice (same as ICE_DATA typeIds — buying unrefined ice)
+const ICE_SELL_IDS = Object.fromEntries(ICE_DATA.map(ice => [ice.name, ice.typeId]));
+
+// ── Ice calculator state ──────────────────────────────────────────────────────
+let _iceRefineEff = 72.36;
+let _iceTaxRate   = 5;
+let _iceSort      = { col: 'iskM3', dir: -1 };
+let _icePrices    = {};
+let _iceLoading   = false;
+
+async function renderIceCalculator(container) {
+  container.innerHTML = `
+    <div id="iceCalcWrap" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
+
+      <!-- toolbar -->
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+                  padding:12px 16px;border-bottom:1px solid var(--border);
+                  background:var(--bg-card);flex-shrink:0;">
+        <span style="font-family:var(--mono);font-size:11px;color:var(--text-3);
+                     letter-spacing:0.1em;">ICE CALCULATOR · JITA 4-4</span>
+        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;">
+          <label style="font-size:12px;color:var(--text-2);font-family:var(--mono);">REFINE EFF %</label>
+          <input id="iceRefineEff" type="number" min="0" max="100" step="0.01"
+                 value="${_iceRefineEff}"
+                 class="field-input" style="width:76px;padding:5px 8px;font-size:12px;"
+                 title="Refining efficiency — perfect skills no implant = 72.36%, T2 implant = 82.5%"/>
+          <label style="font-size:12px;color:var(--text-2);font-family:var(--mono);">TAX %</label>
+          <input id="iceTaxRate" type="number" min="0" max="100" step="0.1"
+                 value="${_iceTaxRate}"
+                 class="field-input" style="width:58px;padding:5px 8px;font-size:12px;"/>
+          <button id="iceRefreshBtn" class="icon-btn"
+                  style="padding:5px 12px;font-size:12px;">⟳ REFRESH</button>
+        </div>
+        <div id="icePriceAge" style="font-size:10px;color:var(--text-3);font-family:var(--mono);"></div>
+      </div>
+
+      <!-- ice product price strip -->
+      <div id="iceProductStrip" style="display:flex;gap:0;border-bottom:1px solid var(--border);
+           background:var(--bg-panel);flex-shrink:0;overflow-x:auto;">
+        ${Object.keys(ICE_PRODUCT_IDS).map(p => `
+          <div style="padding:6px 14px;border-right:1px solid var(--border);white-space:nowrap;">
+            <div style="font-size:9px;color:var(--text-3);font-family:var(--mono);letter-spacing:0.08em;">
+              ${p.toUpperCase().replace(/ /g,'&nbsp;')}
+            </div>
+            <div id="icePrice_${p.replace(/ /g,'_')}"
+                 style="font-size:11px;color:var(--accent);font-family:var(--mono);">…</div>
+          </div>`).join('')}
+      </div>
+
+      <!-- table -->
+      <div style="flex:1;overflow-y:auto;">
+        <table id="iceTable" style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="border-bottom:2px solid var(--border);background:var(--bg-card);
+                       position:sticky;top:0;z-index:1;">
+              <th class="ice-th" data-col="group"   style="text-align:left;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">GROUP ↕</th>
+              <th class="ice-th" data-col="name"    style="text-align:left;padding:10px 8px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">ICE ↕</th>
+              <th class="ice-th" data-col="vol"     style="text-align:right;padding:10px 8px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">M³/UNIT ↕</th>
+              <th style="text-align:right;padding:10px 8px;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">PRODUCTS / UNIT</th>
+              <th class="ice-th" data-col="iskUnit" style="text-align:right;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">REFINE ISK/UNIT ↕</th>
+              <th class="ice-th" data-col="iskM3"   style="text-align:right;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:0.1em;color:var(--accent);">REFINE ISK/M³ ↕</th>
+              <th class="ice-th" data-col="sellRaw" style="text-align:right;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">RAW SELL/UNIT ↕</th>
+              <th class="ice-th" data-col="sellM3"  style="text-align:right;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">RAW SELL/M³ ↕</th>
+            </tr>
+          </thead>
+          <tbody id="iceTableBody">
+            <tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-3);
+                font-family:var(--mono);font-size:12px;">⬡ Fetching Jita prices…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="padding:8px 16px;border-top:1px solid var(--border);background:var(--bg-card);
+                  font-size:10px;color:var(--text-3);font-family:var(--mono);flex-shrink:0;">
+        Prices from Jita 4-4 CNAP (sell orders). Ice does not use efficiency loss — all products
+        are yielded at 100% of base quantity × your efficiency setting. Raw sell = sell unprocessed ice directly.
+      </div>
+    </div>`;
+
+  // Bind toolbar
+  document.getElementById('iceRefineEff').addEventListener('change', e => {
+    _iceRefineEff = parseFloat(e.target.value) || 72.36;
+    buildIceTable();
+  });
+  document.getElementById('iceTaxRate').addEventListener('change', e => {
+    _iceTaxRate = parseFloat(e.target.value) || 5;
+    buildIceTable();
+  });
+  document.getElementById('iceRefreshBtn').addEventListener('click', () => loadIcePrices());
+
+  // Sortable headers
+  document.querySelectorAll('#iceCalcWrap .ice-th').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (_iceSort.col === col) _iceSort.dir *= -1;
+      else { _iceSort.col = col; _iceSort.dir = -1; }
+      buildIceTable();
+    });
+  });
+
+  await loadIcePrices();
+}
+
+async function loadIcePrices() {
+  if (_iceLoading) return;
+  _iceLoading = true;
+  const refreshBtn = document.getElementById('iceRefreshBtn');
+  if (refreshBtn) refreshBtn.disabled = true;
+
+  try {
+    const productIds = Object.values(ICE_PRODUCT_IDS);
+    const rawIceIds  = Object.values(ICE_SELL_IDS);
+    const allIds     = [...new Set([...productIds, ...rawIceIds])];
+
+    const raw = await window.eveAPI.getJitaPrices(allIds);
+    _icePrices = raw || {};
+
+    // Update product price strip
+    for (const [pName, pId] of Object.entries(ICE_PRODUCT_IDS)) {
+      const el = document.getElementById(`icePrice_${pName.replace(/ /g, '_')}`);
+      if (!el) continue;
+      const p = _icePrices[pId];
+      el.textContent = p?.sell > 0 ? formatNumber(p.sell) + ' ISK' : '—';
+    }
+
+    const ageEl = document.getElementById('icePriceAge');
+    if (ageEl) ageEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+
+    buildIceTable();
+  } catch (err) {
+    logToConsole(`Ice prices fetch failed: ${err.message}`, 'error');
+    const body = document.getElementById('iceTableBody');
+    if (body) body.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;
+      color:var(--danger);font-family:var(--mono);font-size:12px;">
+      ⚠ Failed to fetch prices: ${escHtml(err.message)}</td></tr>`;
+  } finally {
+    _iceLoading = false;
+    const btn = document.getElementById('iceRefreshBtn');
+    if (btn) btn.disabled = false;
+  }
+}
+
+function calcIceRow(ice) {
+  const effFactor = _iceRefineEff / 100;
+  const taxFactor = 1 - (_iceTaxRate / 100);
+
+  // Ice refining: EVE floors the product quantities, then applies tax
+  let refineISK = 0;
+  for (const [pName, baseQty] of Object.entries(ice.products)) {
+    const pId    = ICE_PRODUCT_IDS[pName];
+    const p      = _icePrices[pId];
+    const price  = p?.sell > 0 ? p.sell : (p?.buy || 0);
+    const actual = Math.floor(baseQty * effFactor);
+    refineISK   += actual * price * taxFactor;
+  }
+
+  const iskPerUnit = refineISK;                   // batchSize = 1 for all ice
+  const iskPerM3   = iskPerUnit / ice.volume;
+
+  // Raw sell price for the unrefined ice unit
+  const rawId       = ice.typeId;
+  const rawP        = _icePrices[rawId];
+  const rawSellUnit = rawP?.sell > 0 ? rawP.sell : (rawP?.buy || 0);
+  const rawSellM3   = rawSellUnit / ice.volume;
+
+  return { iskPerUnit, iskPerM3, rawSellUnit, rawSellM3 };
+}
+
+function buildIceTable() {
+  const body = document.getElementById('iceTableBody');
+  if (!body) return;
+
+  const rows = ICE_DATA.map(ice => {
+    const { iskPerUnit, iskPerM3, rawSellUnit, rawSellM3 } = calcIceRow(ice);
+    return { ice, iskPerUnit, iskPerM3, rawSellUnit, rawSellM3 };
+  });
+
+  // Sort
+  const col = _iceSort.col;
+  const dir = _iceSort.dir;
+  rows.sort((a, b) => {
+    let va, vb;
+    if      (col === 'name')    { return dir * a.ice.name.localeCompare(b.ice.name); }
+    else if (col === 'group')   { return dir * a.ice.group.localeCompare(b.ice.group); }
+    else if (col === 'vol')     { va = a.ice.volume;   vb = b.ice.volume; }
+    else if (col === 'iskUnit') { va = a.iskPerUnit;   vb = b.iskPerUnit; }
+    else if (col === 'iskM3')   { va = a.iskPerM3;     vb = b.iskPerM3; }
+    else if (col === 'sellRaw') { va = a.rawSellUnit;  vb = b.rawSellUnit; }
+    else if (col === 'sellM3')  { va = a.rawSellM3;    vb = b.rawSellM3; }
+    else                        { va = a.iskPerM3;     vb = b.iskPerM3; }
+    return dir * (va - vb);
+  });
+
+  const maxIskM3 = Math.max(...rows.map(r => r.iskPerM3), 1);
+
+  // Group colour coding: Highsec green, Highsec+ teal, Lowsec amber, Compressed purple
+  const groupColors = {
+    'Highsec':    '#4ecbb0',
+    'Highsec+':   '#3ab8d4',
+    'Lowsec':     '#e3a84d',
+    'Compressed': '#ab7ab8',
+  };
+
+  body.innerHTML = rows.map((r, i) => {
+    const { ice, iskPerUnit, iskPerM3, rawSellUnit, rawSellM3 } = r;
+    const gc    = groupColors[ice.group] || 'var(--text-3)';
+    const barW  = Math.round((iskPerM3 / maxIskM3) * 100);
+    const isTop = i === 0;
+
+    // Product yield summary
+    const prodSummary = Object.entries(ice.products).map(([pn, qty]) => {
+      const actual = Math.floor(qty * (_iceRefineEff / 100));
+      // Use short abbreviations so the column stays compact
+      const abbr = pn.split(' ').map(w => w[0]).join('');
+      return `<span style="color:var(--text-2);">${abbr}:</span>`
+           + `<span style="color:var(--text-1);"> ${formatNumber(actual)}</span>`;
+    }).join(' &nbsp;');
+
+    return `
+      <tr style="border-bottom:1px solid var(--border);
+                 background:${isTop ? 'rgba(255,255,255,0.03)' : 'transparent'};
+                 ${isTop ? 'outline:1px solid var(--accent);' : ''}">
+        <td style="padding:10px 14px;white-space:nowrap;">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;
+                       background:${gc};margin-right:6px;vertical-align:middle;"></span>
+          <span style="font-family:var(--mono);font-size:10px;color:${gc};">${ice.group}</span>
+        </td>
+        <td style="padding:10px 8px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <img src="https://images.evetech.net/types/${ice.typeId}/icon?size=32"
+                 onerror="this.onerror=null;this.style.display='none';"
+                 style="width:24px;height:24px;border-radius:3px;border:1px solid var(--border);flex-shrink:0;">
+            <span style="color:var(--text-1);font-weight:600;">${escHtml(ice.name)}</span>
+          </div>
+        </td>
+        <td style="padding:10px 8px;text-align:right;font-family:var(--mono);color:var(--text-2);">
+          ${ice.volume.toLocaleString()}
+        </td>
+        <td style="padding:10px 8px;text-align:right;font-family:var(--mono);font-size:10px;color:var(--text-3);">
+          ${prodSummary}
+        </td>
+        <td style="padding:10px 14px;text-align:right;font-family:var(--mono);
+                   color:${iskPerUnit > rawSellUnit ? 'var(--success)' : 'var(--text-2)'};">
+          ${iskPerUnit > 0 ? formatNumber(iskPerUnit) : '—'}
+        </td>
+        <td style="padding:10px 14px;text-align:right;">
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+            <div style="width:60px;height:4px;background:var(--bg-card);border-radius:2px;overflow:hidden;flex-shrink:0;">
+              <div style="height:100%;width:${barW}%;background:${isTop ? 'var(--accent)' : 'var(--text-3)'};border-radius:2px;"></div>
+            </div>
+            <span style="font-family:var(--mono);font-weight:700;
+                         color:${isTop ? 'var(--accent)' : 'var(--text-1)'};">
+              ${iskPerM3 > 0 ? formatNumber(iskPerM3) : '—'}
+            </span>
+          </div>
+        </td>
+        <td style="padding:10px 14px;text-align:right;font-family:var(--mono);
+                   color:${rawSellUnit > iskPerUnit ? 'var(--success)' : 'var(--text-2)'};">
+          ${rawSellUnit > 0 ? formatNumber(rawSellUnit) : '—'}
+        </td>
+        <td style="padding:10px 14px;text-align:right;font-family:var(--mono);color:var(--text-2);">
+          ${rawSellM3 > 0 ? formatNumber(rawSellM3) : '—'}
+        </td>
+      </tr>`;
+  }).join('');
+}

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+<head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>EVE Carbon</title>
@@ -17,9 +18,12 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 </head>
 <body>
-<!-- CONCORD ambient glow layers -->
-<div class="concord-bg-glow concord-glow-main" aria-hidden="true"></div>
+
+<!-- ── Ambient glow ──────────────────────────────────────────────────────── -->
+<div class="concord-bg-glow concord-glow-main"      aria-hidden="true"></div>
 <div class="concord-bg-glow concord-glow-secondary" aria-hidden="true"></div>
+
+<!-- ── Title bar ────────────────────────────────────────────────────────── -->
 <div class="titlebar">
   <div class="titlebar-left">
     <span class="titlebar-icon">⬡</span>
@@ -32,8 +36,10 @@
   </div>
 </div>
 
+<!-- ── Main layout ───────────────────────────────────────────────────────── -->
 <div class="layout">
 
+  <!-- ── Sidebar ────────────────────────────────────────────────────────── -->
   <div class="sidebar">
     <div class="panel nav-panel">
       <div class="panel-header nav-header">
@@ -50,7 +56,6 @@
           <span class="nav-icon">🏠</span>
           <span class="nav-label">Dashboard</span>
         </button>
-        <!-- FIX: corrected mismatched tags on industry nav button -->
         <div class="nav-item-with-menu">
           <button class="nav-btn nav-btn-industry" data-page="industry" title="Industry">
             <span class="nav-icon">⚙</span>
@@ -79,12 +84,15 @@
         </button>
         <button class="nav-btn nav-btn-forums" data-page="forums" title="Forums">
           <span class="nav-icon">💬</span>
-          <span class="nav-label">Forums</span><span class="status-light status-offline" title="Disconnected"></span>
+          <span class="nav-label">Forums</span>
+          <span class="status-light status-offline" title="Disconnected"></span>
         </button>
         <button class="nav-btn nav-btn-jabber" data-page="jabber" title="Jabber">
           <span class="nav-icon">📢</span>
           <span class="nav-label">Jabber</span>
-          <span class="nav-status" id="jabberNavStatus"><span class="status-light status-offline" title="Disconnected"></span></span>
+          <span class="nav-status" id="jabberNavStatus">
+            <span class="status-light status-offline" title="Disconnected"></span>
+          </span>
         </button>
         <button class="nav-btn nav-btn-market" data-page="market" title="Market">
           <span class="nav-icon">📊</span>
@@ -109,320 +117,63 @@
         <img id="activeCharPortrait" src="" alt="active" class="active-char-portrait" />
         <div class="active-char-info">
           <div id="activeCharName" class="active-char-name">None</div>
-          <div id="activeCharID" class="active-char-id">—</div>
+          <div id="activeCharID"   class="active-char-id">—</div>
         </div>
       </div>
     </div>
+  </div><!-- /sidebar -->
 
-
-    <!-- selectedBpCard and researchPanel removed: blueprint selection, ME/TE
-         controls, and the CALCULATE button are now self-contained inside the
-         detail panel rendered by openBlueprintDetail() in blueprints.js.
-         The sidebar remains clean while the Industry > My Blueprints tab is open. -->
-
-
-  </div>
-
+  <!-- ── Main content — pages injected here by pageLoader.js ───────────── -->
   <div class="main-content">
-
-    <div id="navPagesContainer" class="panel pages-panel" style="display:none; height:100%; min-width:0; overflow:hidden; flex:1;">
-
-      <!-- Characters Page -->
-      <div id="page-characters" class="nav-page active" style="flex-direction:column; height:100%; min-width:0; overflow:hidden;">
-        <div class="page-header">
-          <div>
-            <h2>Characters</h2>
-            <div class="page-description">The first character is selected by default on startup. Drag cards to reorder your character list.</div>
-          </div>
-          <button class="close-page-btn" onclick="closePage('characters')">✕</button>
-        </div>
-        <div id="selectedCharacterSection" style="display:none; padding:20px; border-bottom:1px solid var(--border); background:var(--bg-card);">
-          <div class="selected-character-card">
-            <div style="display:flex; gap:16px; align-items:center;">
-              <img id="selectedCharPortrait" src="" alt="" style="width:64px; height:64px; border-radius:50%; border:2px solid var(--accent); object-fit:cover;" />
-              <div style="flex:1;">
-                <div style="font-size:11px; color:var(--text-2); letter-spacing:0.1em; margin-bottom:4px; font-weight:600;">SELECTED CHARACTER</div>
-                <div id="selectedCharName" style="font-size:18px; font-weight:600; color:var(--text-1); margin-bottom:4px;">No Character Selected</div>
-                <div id="selectedCharMeta" style="font-size:10px; color:var(--text-3); font-family:var(--mono);"></div>
-              </div>
-              <button class="char-action-btn" onclick="clearSelectedCharacter()" title="Clear selection">✕</button>
-            </div>
-          </div>
-        </div>
-        <div class="char-filter-row" style="padding:15px; border-bottom:1px solid var(--border); display:flex; flex-wrap:wrap; gap:15px; background:var(--bg-card); align-items:center;">
-          <input type="text" id="charSearch" class="field-input" style="flex:1; min-width:200px; font-size:14px; padding:10px;" placeholder="Search characters..." />
-          <button class="add-character-btn" id="addCharacterNavBtn" title="Add character">+ ADD CHARACTER</button>
-        </div>
-        <div id="accountsListNav" class="accounts-grid">
-          <div class="empty-state" style="width:100%;">
-            <div class="empty-icon">⬡</div>
-            <div class="empty-title">NO CHARACTERS</div>
-            <div class="empty-sub">Click + ADD CHARACTER to login with EVE SSO.</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Dashboard Page -->
-      <div id="page-dashboard" class="nav-page" style="flex-direction:column; height:100%; min-width:0; overflow:hidden;">
-        <div class="page-header">
-          <div>
-            <h2>Dashboard</h2>
-            <div class="page-description">Command center — net worth, industry jobs, and character status.</div>
-          </div>
-          <button class="close-page-btn" onclick="closePage('dashboard')">&#x2715;</button>
-        </div>
-        <div class="page-content" style="display:flex; flex-direction:column; gap:16px; padding:16px; overflow-y:auto;">
-          <div id="dashboardWelcomeBanner" class="dashboard-welcome-banner">
-            <div class="dashboard-welcome-inner">
-              <div class="dashboard-welcome-placeholder">
-                <span style="font-size:32px;color:var(--border-b);">&#x2B21;</span>
-              </div>
-              <div class="dashboard-welcome-text">
-                <div class="dashboard-welcome-greeting">WELCOME BACK, COMMANDER</div>
-                <div id="dashboardMainCharName" class="dashboard-welcome-name">Loading...</div>
-              </div>
-            </div>
-          </div>
-          <div id="dashboardContent" class="dashboard-grid" style="position:relative;">
-            <div class="dashboard-panel" id="dashboardSummaryPanel">
-              <div class="dashboard-panel-title">&#x2B21; NET WORTH &amp; WEALTH GROWTH</div>
-              <div id="dashboardNetworthSummary">
-                <div class="loading-row">Loading...</div>
-              </div>
-            </div>
-            <div class="dashboard-panel" id="dashboardJobsPanel">
-              <div class="dashboard-panel-title">&#x25C8; FINISHED INDUSTRY JOBS</div>
-              <div id="dashboardJobsTable">
-                <div class="loading-row">Loading jobs...</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Industry Page -->
-      <div id="page-industry" class="nav-page" style="flex-direction:column; height:100%; overflow:hidden;">
-        <div class="page-header">
-          <div>
-            <h2>Industry</h2>
-            <div class="page-description">Manufacturing, blueprints, reactions and more.</div>
-          </div>
-          <button class="close-page-btn" onclick="closePage('industry')">✕</button>
-        </div>
-        <div class="industry-layout">
-          <div class="industry-subnav">
-            <div class="industry-subnav-label">TOOLS</div>
-            <!-- data-industry-tab drives navigateIndustryTab(); "blueprints" is the default -->
-            <button class="industry-sub-btn active" data-industry-tab="blueprints"><span class="industry-sub-icon">⬡</span>My Blueprints</button>
-            <button class="industry-sub-btn" data-industry-tab="search"><span class="industry-sub-icon">◑</span>BP Search</button>
-            <button class="industry-sub-btn" data-industry-tab="active-jobs"><span class="industry-sub-icon">◈</span>Active Jobs</button>
-            <button class="industry-sub-btn" data-industry-tab="calculator"><span class="industry-sub-icon">⚙</span>Calculator</button>
-            <button class="industry-sub-btn" data-industry-tab="cost-index"><span class="industry-sub-icon">◎</span>Cost Index</button>
-            <button class="industry-sub-btn" data-industry-tab="shopping-lists"><span class="industry-sub-icon">⬡</span>Shopping Lists</button>
-            <button class="industry-sub-btn" data-industry-tab="invention"><span class="industry-sub-icon">◆</span>Invention Buddy</button>
-            <button class="industry-sub-btn" data-industry-tab="reactions"><span class="industry-sub-icon">◈</span>Reactions Profit</button>
-            <button class="industry-sub-btn" data-industry-tab="ore"><span class="industry-sub-icon">⬡</span>Ore Calculator</button>
-            <button class="industry-sub-btn" data-industry-tab="ice"><span class="industry-sub-icon">⬡</span>Ice Calculator</button>
-            <button class="industry-sub-btn" data-industry-tab="gas"><span class="industry-sub-icon">⬡</span>Gas Calculator</button>
-            <button class="industry-sub-btn" data-industry-tab="moon"><span class="industry-sub-icon">◎</span>Moon Scanning</button>
-          </div>
-          <!-- industryTabContent is the single mount-point for all tab UIs.
-               navigateIndustryTab('blueprints') renders the library + detail panel here.
-               No duplicate bpLibList / results IDs exist anywhere else in the document. -->
-          <div id="industryTabContent" class="industry-content">
-            <!-- Populated immediately by navigateToPage('industry') → navigateIndustryTab('blueprints') -->
-          </div>
-        </div>
-      </div>
-
-      <!-- Assets Page -->
-      <div id="page-assets" class="nav-page" style="flex-direction:column; height:100%;">
-        <div class="page-header">
-          <div>
-            <h2>Assets</h2>
-            <div class="page-description">Loaded instantly from your local database — no ESI call. Sync characters on the Characters page to refresh.</div>
-          </div>
-          <button class="close-page-btn" onclick="closePage('assets')">✕</button>
-        </div>
-        <div class="page-content" style="display:flex; flex-direction:column; gap:0; height:100%; overflow:hidden;">
-          <!-- Toolbar: summary + search + filters -->
-          <div class="asset-toolbar" style="display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--border); background:var(--bg-card); flex-shrink:0;">
-            <span id="assetSummary" class="asset-summary" style="margin-right:auto;">Loading assets…</span>
-            <input type="text" id="assetSearch" class="field-input" style="width:220px; padding:7px 10px; font-size:13px;" placeholder="Search items…"
-              oninput="filterAssets()"/>
-            <select id="assetCharFilter" class="field-input" style="width:180px; padding:7px 10px; font-size:13px;" onchange="filterAssets()">
-              <option value="">All Characters</option>
-            </select>
-            <select id="assetRegionFilter" class="field-input" style="width:160px; padding:7px 10px; font-size:13px;" onchange="filterAssets()">
-              <option value="">All Regions</option>
-            </select>
-            <button class="icon-btn" onclick="loadAssets()" title="Reload from local DB" style="padding:7px 14px; font-size:12px;">⟳ RELOAD</button>
-          </div>
-          <div id="assetTableWrapper" class="asset-table-wrapper" style="flex:1; overflow-y:auto;">
-            <table id="assetTable" class="asset-table">
-              <thead>
-                <tr>
-                  <th>Owner</th>
-                  <th class="asset-qty-header">Qty</th>
-                  <th>Item</th>
-                  <th>Location</th>
-                  <th>Solar System</th>
-                  <th>Region</th>
-                  <th>Sec</th>
-                  <th>Corp</th>
-                  <th>Jita 4-4 Value</th>
-                  <th>Volume (m³)</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td colspan="10" class="loading-row">No assets loaded yet — sync a character on the Characters page first.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- Wallets Page -->
-      <div id="page-wallets" class="nav-page" style="flex-direction:column; height:100%;">
-        <div class="page-header">
-          <div>
-            <h2>Wallets</h2>
-            <div class="page-description">Wallet balances are read from your local database. Sync characters on the Characters page to refresh.</div>
-          </div>
-          <button class="close-page-btn" onclick="closePage('wallets')">✕</button>
-        </div>
-        <!-- Summary bar -->
-        <div style="display:flex; align-items:center; padding:12px 16px; border-bottom:1px solid var(--border); background:var(--bg-card); flex-shrink:0; flex-wrap:wrap; gap:10px;">
-          <span id="walletsSummary" class="asset-summary"></span>
-        </div>
-        <!-- Total combined ISK row -->
-        <div id="walletsTotalRow" style="display:none; padding:14px 20px; background:var(--bg-panel); border-bottom:1px solid var(--border); flex-shrink:0;">
-          <span style="font-size:11px; color:var(--text-2); letter-spacing:0.1em; font-weight:600;">COMBINED LIQUID WEALTH</span>
-          <span id="walletsTotalValue" style="margin-left:16px; font-size:20px; font-weight:700; color:var(--accent); font-family:var(--mono);">0.00 ISK</span>
-        </div>
-        <div class="page-content" style="overflow-y:auto; padding:16px;">
-          <div class="wallets-grid" id="walletsGrid"></div>
-        </div>
-      </div>
-
-      <!-- FC Page -->
-      <div id="page-fc" class="nav-page" style="flex-direction:column; height:100%;">
-        <div class="page-header">
-          <h2>Fleet Commander</h2>
-          <button class="close-page-btn" onclick="closePage('fc')">✕</button>
-        </div>
-        <div class="page-content"><p>Fleet command tools and information - coming soon</p></div>
-      </div>
-
-      <!-- Map Page -->
-      <div id="page-map" class="nav-page" style="flex-direction:column; height:100%;">
-        <div class="page-header">
-          <h2>Map</h2>
-          <button class="close-page-btn" onclick="closePage('map')">✕</button>
-        </div>
-        <div class="page-content"><p>Map and navigation page - coming soon</p></div>
-      </div>
-
-      <!-- PI Page -->
-    <div id="page-pi" class="nav-page" style="flex-direction:column; height:100%; min-width:0; overflow:hidden;">
-      <div class="page-header">
-        <div>
-          <h2>Planetary Interaction</h2>
-          <div class="page-description">Monitor your planetary colonies and extraction networks.</div>
-        </div>
-        <button class="close-page-btn" onclick="closePage('pi')">✕</button>
-      </div>
-      <div id="piContainer" style="height:100%; overflow-y:auto;"></div>
+    <div id="navPagesContainer" class="panel pages-panel"
+         style="display:none; height:100%; min-width:0; overflow:hidden; flex:1;">
+      <!-- page-*.html fragments are fetched and inserted here at startup -->
     </div>
-
-      <!-- Forums Page -->
-      <div id="page-forums" class="nav-page" style="flex-direction:column; height:100%;">
-        <div class="page-header">
-          <h2>Forums</h2>
-          <button class="close-page-btn" onclick="closePage('forums')">✕</button>
-        </div>
-        <div class="page-content"><p>Forums and community links - coming soon</p></div>
-      </div>
-
-      <!-- Jabber Page -->
-      <div id="page-jabber" class="nav-page" style="flex-direction:column; height:100%;">
-        <div class="page-header">
-          <h2>Jabber</h2>
-          <button class="close-page-btn" onclick="closePage('jabber')">✕</button>
-        </div>
-        <div class="page-content" style="display:flex; flex-direction:column; gap:18px;">
-          <div class="panel" style="padding:16px; background:var(--bg-panel); border:1px solid var(--border); border-radius:10px;">
-            <div style="font-size:13px; color:var(--text-2); line-height:1.5;">
-              Jabber login settings are now managed in the settings menu. Open the ⚙ button and save your Jabber service, JID and password there, then return here to connect.
-            </div>
-          </div>
-          <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-            <span id="jabberStatus" class="asset-summary">Connecting to Jabber...</span>
-          </div>
-          <div class="ping-filter-row">
-            <span style="font-size:13px; color:var(--text-2);">Director bot filter is managed in the settings menu.</span>
-            <span id="jabberSummary" class="asset-summary">No messages received yet.</span>
-          </div>
-          <div class="asset-table-wrapper" style="padding:0;">
-            <table id="jabberTable" class="asset-table ping-table">
-              <thead>
-                <tr><th>From</th><th>Message</th><th>Type</th><th>Director</th></tr>
-              </thead>
-              <tbody>
-                <tr><td colspan="4" class="loading-row">Auto-connecting to Jabber; saved settings are used from the settings menu.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- Market Page -->
-      <div id="page-market" class="nav-page" style="flex-direction:column; height:100%;">
-        <div class="page-header">
-          <h2>Market</h2>
-          <button class="close-page-btn" onclick="closePage('market')">✕</button>
-        </div>
-        <div class="page-content"><p>Market data and trading tools - coming soon</p></div>
-      </div>
-
-    </div><!-- end navPagesContainer -->
-
-    <!-- Blueprint library and results are rendered inside #industryTabContent by navigateIndustryTab() -->
-
   </div>
 
-</div>
+</div><!-- /layout -->
 
-<!-- Materials Modal Popup -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- ── Global modals (always in DOM, not tied to any single page) ──────── -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+
+<!-- Materials Modal -->
 <div id="materialsModalBackdrop" class="modal-backdrop" style="display:none;">
   <div class="modal" style="max-width:620px; width:95%; max-height:85vh; overflow-y:auto;">
     <div class="modal-header" style="justify-content:space-between;">
       <div style="display:flex; align-items:center; gap:8px;">
-        <img id="materialsModalIcon" src="" alt="" style="width:28px; height:28px; border-radius:4px; border:1px solid var(--border); flex-shrink:0;" />
+        <img id="materialsModalIcon" src="" alt=""
+             style="width:28px; height:28px; border-radius:4px; border:1px solid var(--border); flex-shrink:0;" />
         <span id="materialsModalTitle">Materials</span>
       </div>
-      <button onclick="closeMaterialsModal()" class="icon-btn" style="font-size:16px; padding:0; background:none; border:none; color:var(--text-2); cursor:pointer;">✕</button>
+      <button onclick="closeMaterialsModal()" class="icon-btn"
+              style="font-size:16px; padding:0; background:none; border:none; color:var(--text-2); cursor:pointer;">✕</button>
     </div>
-    <div class="modal-body" id="materialsModalBody" style="max-height:calc(85vh - 80px); overflow-y:auto;">
+    <div class="modal-body" id="materialsModalBody"
+         style="max-height:calc(85vh - 80px); overflow-y:auto;">
       <div style="text-align:center; padding:20px; color:var(--text-2);">Loading materials...</div>
     </div>
   </div>
 </div>
 
+<!-- Settings Drawer -->
 <div id="uiSettingsDrawer" class="modal-backdrop" style="display:none;">
   <div class="modal" style="max-width:720px; width:100%; max-height:90vh;">
     <div class="panel-header" style="justify-content:space-between; gap:8px;">
-      <div style="display:flex; align-items:center; gap:8px;"><span class="panel-icon">⚙</span><span>UI Settings</span></div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span class="panel-icon">⚙</span>
+        <span>UI Settings</span>
+      </div>
       <button id="closeSettingsBtn" class="icon-btn" style="font-size:16px;">✕</button>
     </div>
     <div class="settings-drawer-inner">
       <div class="settings-menu">
         <div class="settings-menu-title">Settings menu</div>
-        <button class="settings-menu-btn active" data-settings-tab="jabber">Jabber</button>
-        <button class="settings-menu-btn" data-settings-tab="forums">Forums</button>
-        <button class="settings-menu-btn" data-settings-tab="fleetCommander">Fleet Commander</button>
-
+        <button class="settings-menu-btn active"  data-settings-tab="jabber">Jabber</button>
+        <button class="settings-menu-btn"          data-settings-tab="forums">Forums</button>
+        <button class="settings-menu-btn"          data-settings-tab="fleetCommander">Fleet Commander</button>
       </div>
+      <!-- Jabber tab -->
       <div id="settingsTabJabber" class="settings-tab">
         <div class="panel" style="padding:16px; margin:0; background:var(--bg-panel); border:none; box-shadow:none;">
           <div class="settings-panel-block">
@@ -441,13 +192,19 @@
                 <input id="jabberPassword" class="field-input" type="password" placeholder="Password" />
               </div>
               <div class="ui-settings-row">
-                <label><input id="jabberDirectorOnly" type="checkbox" style="margin-right:8px;" />Show Director bot messages only</label>
+                <label>
+                  <input id="jabberDirectorOnly" type="checkbox" style="margin-right:8px;" />
+                  Show Director bot messages only
+                </label>
               </div>
             </div>
-            <div style="font-size:12px; color:var(--text-3); margin-top:10px;">These values are stored locally and will be preserved until you change them.</div>
+            <div style="font-size:12px; color:var(--text-3); margin-top:10px;">
+              These values are stored locally and will be preserved until you change them.
+            </div>
           </div>
         </div>
       </div>
+      <!-- Forums tab -->
       <div id="settingsTabForums" class="settings-tab" style="display:none;">
         <div class="panel" style="padding:16px; margin:0; background:var(--bg-panel); border:none; box-shadow:none;">
           <div class="settings-panel-block">
@@ -456,6 +213,7 @@
           </div>
         </div>
       </div>
+      <!-- Fleet Commander tab -->
       <div id="settingsTabFleetCommander" class="settings-tab" style="display:none;">
         <div class="panel" style="padding:16px; margin:0; background:var(--bg-panel); border:none; box-shadow:none;">
           <div class="settings-panel-block">
@@ -464,7 +222,6 @@
           </div>
         </div>
       </div>
-
     </div>
     <div style="display:flex; justify-content:flex-end; gap:10px; padding:16px;">
       <button id="saveSettingsBtn" class="calc-btn">SAVE</button>
@@ -472,68 +229,78 @@
   </div>
 </div>
 
-<!-- ── Wallet Journal Modal ─────────────────────────────────────────── -->
-<div id="walletJournalBackdrop" class="modal-backdrop" style="display:none; position:fixed; inset:0; align-items:center; justify-content:center; z-index:10010; background:rgba(0,0,0,0.75); backdrop-filter:blur(4px);">
+<!-- Wallet Journal Modal -->
+<div id="walletJournalBackdrop" class="modal-backdrop"
+     style="display:none; position:fixed; inset:0; align-items:center; justify-content:center;
+            z-index:10010; background:rgba(0,0,0,0.75); backdrop-filter:blur(4px);">
   <div id="walletJournalModal" style="
-    background:var(--bg-panel); border:1px solid var(--border); border-radius:12px;
-    width:96vw; height:92vh; display:flex; flex-direction:column;
-    box-shadow:0 20px 60px rgba(0,0,0,0.7); overflow:hidden;">
+      background:var(--bg-panel); border:1px solid var(--border); border-radius:12px;
+      width:96vw; height:92vh; display:flex; flex-direction:column;
+      box-shadow:0 20px 60px rgba(0,0,0,0.7); overflow:hidden;">
     <!-- Header -->
-    <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border); background:rgba(8,8,8,0.95); flex-shrink:0;">
+    <div style="display:flex; align-items:center; justify-content:space-between;
+                padding:16px 20px; border-bottom:1px solid var(--border);
+                background:rgba(8,8,8,0.95); flex-shrink:0;">
       <div style="display:flex; align-items:center; gap:12px;">
-        <img id="journalCharPortrait" src="" alt="" style="width:40px;height:40px;border-radius:50%;border:1px solid var(--border);object-fit:cover;"/>
+        <img id="journalCharPortrait" src="" alt=""
+             style="width:40px;height:40px;border-radius:50%;border:1px solid var(--border);object-fit:cover;"/>
         <div>
-          <div id="journalCharName" style="font-size:14px;font-weight:700;color:var(--text-1);letter-spacing:0.05em;"></div>
+          <div id="journalCharName"
+               style="font-size:14px;font-weight:700;color:var(--text-1);letter-spacing:0.05em;"></div>
           <div style="font-size:10px;color:var(--text-3);font-family:var(--mono);">WALLET JOURNAL</div>
         </div>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
-        <!-- Page tabs -->
         <div style="display:flex; border:1px solid var(--border); border-radius:6px; overflow:hidden;">
-          <button class="journal-tab-btn active" data-tab="overview" style="padding:6px 14px;font-size:11px;font-family:var(--mono);font-weight:600;letter-spacing:0.08em;cursor:pointer;background:var(--accent);color:#000;border:none;">OVERVIEW</button>
-          <button class="journal-tab-btn" data-tab="transactions" style="padding:6px 14px;font-size:11px;font-family:var(--mono);font-weight:600;letter-spacing:0.08em;cursor:pointer;background:none;color:var(--text-2);border:none;">TRANSACTIONS</button>
-          <button class="journal-tab-btn" data-tab="lp" style="padding:6px 14px;font-size:11px;font-family:var(--mono);font-weight:600;letter-spacing:0.08em;cursor:pointer;background:none;color:var(--text-2);border:none;">LP STANDINGS</button>
+          <button class="journal-tab-btn active" data-tab="overview"
+                  style="padding:6px 14px;font-size:11px;font-family:var(--mono);font-weight:600;
+                         letter-spacing:0.08em;cursor:pointer;background:var(--accent);color:#000;border:none;">OVERVIEW</button>
+          <button class="journal-tab-btn" data-tab="transactions"
+                  style="padding:6px 14px;font-size:11px;font-family:var(--mono);font-weight:600;
+                         letter-spacing:0.08em;cursor:pointer;background:none;color:var(--text-2);border:none;">TRANSACTIONS</button>
+          <button class="journal-tab-btn" data-tab="lp"
+                  style="padding:6px 14px;font-size:11px;font-family:var(--mono);font-weight:600;
+                         letter-spacing:0.08em;cursor:pointer;background:none;color:var(--text-2);border:none;">LP STANDINGS</button>
         </div>
-        <button onclick="closeWalletJournal()" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--text-2);cursor:pointer;padding:6px 10px;font-size:14px;line-height:1;">✕</button>
+        <button onclick="closeWalletJournal()"
+                style="background:none;border:1px solid var(--border);border-radius:4px;
+                       color:var(--text-2);cursor:pointer;padding:6px 10px;font-size:14px;line-height:1;">✕</button>
       </div>
     </div>
     <!-- Tab content -->
     <div style="flex:1;overflow:hidden;display:flex;flex-direction:column;">
-      <!-- Overview tab: ring chart — fills all remaining space -->
-      <div id="journalTab-overview" class="journal-tab-content" style="
-          flex:1; display:flex; align-items:center; justify-content:center;
-          padding:0; overflow:hidden; height:100%;">
-        <!-- Two-column layout that fills the space -->
-        <div style="display:flex; align-items:center; justify-content:center;
-                    gap:0; width:100%; height:100%;">
-          <!-- Left: ring -->
+      <!-- Overview -->
+      <div id="journalTab-overview" class="journal-tab-content"
+           style="flex:1; display:flex; align-items:center; justify-content:center; padding:0; overflow:hidden; height:100%;">
+        <div style="display:flex; align-items:center; justify-content:center; gap:0; width:100%; height:100%;">
           <div style="flex:1; display:flex; align-items:center; justify-content:center;
                       height:100%; border-right:1px solid var(--border);">
             <div style="position:relative; width:320px; height:320px;">
               <canvas id="journalRingChart" width="320" height="320"></canvas>
-              <div id="journalRingCenter" style="position:absolute;top:50%;left:50%;
-                  transform:translate(-50%,-50%);text-align:center;pointer-events:none;">
-                <div id="journalRingValue" style="font-size:22px;font-weight:700;
-                    color:var(--text-1);font-family:var(--mono);white-space:nowrap;">—</div>
+              <div id="journalRingCenter"
+                   style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+                          text-align:center;pointer-events:none;">
+                <div id="journalRingValue"
+                     style="font-size:22px;font-weight:700;color:var(--text-1);
+                            font-family:var(--mono);white-space:nowrap;">—</div>
                 <div style="font-size:10px;color:var(--text-3);font-family:var(--mono);
-                    letter-spacing:0.08em;margin-top:4px;">30 Days Income</div>
+                            letter-spacing:0.08em;margin-top:4px;">30 Days Income</div>
               </div>
             </div>
           </div>
-          <!-- Right: stats + legend -->
           <div style="flex:1; display:flex; flex-direction:column; justify-content:center;
                       padding:60px; gap:32px; height:100%;">
             <div>
               <div style="font-size:10px;color:var(--text-3);letter-spacing:0.12em;
                           font-family:var(--mono);margin-bottom:8px;">INCOME (30 DAYS)</div>
-              <div id="journalIncomeTotal" style="font-size:32px;font-weight:700;
-                  color:#4ecbb0;font-family:var(--mono);">—</div>
+              <div id="journalIncomeTotal"
+                   style="font-size:32px;font-weight:700;color:#4ecbb0;font-family:var(--mono);">—</div>
             </div>
             <div>
               <div style="font-size:10px;color:var(--text-3);letter-spacing:0.12em;
                           font-family:var(--mono);margin-bottom:8px;">EXPENSES (30 DAYS)</div>
-              <div id="journalExpenseTotal" style="font-size:32px;font-weight:700;
-                  color:var(--danger);font-family:var(--mono);">—</div>
+              <div id="journalExpenseTotal"
+                   style="font-size:32px;font-weight:700;color:var(--danger);font-family:var(--mono);">—</div>
             </div>
             <div style="border-top:1px solid var(--border);padding-top:24px;">
               <div style="font-size:10px;color:var(--text-3);letter-spacing:0.12em;
@@ -543,8 +310,9 @@
           </div>
         </div>
       </div>
-      <!-- Transactions tab -->
-      <div id="journalTab-transactions" class="journal-tab-content" style="display:none;flex:1;overflow-y:auto;">
+      <!-- Transactions -->
+      <div id="journalTab-transactions" class="journal-tab-content"
+           style="display:none;flex:1;overflow-y:auto;">
         <div style="overflow-x:auto;height:100%;">
           <table style="width:100%;border-collapse:collapse;min-width:680px;">
             <thead>
@@ -557,13 +325,15 @@
               </tr>
             </thead>
             <tbody id="journalTransactionBody">
-              <tr><td colspan="5" style="padding:20px;text-align:center;color:var(--text-3);font-family:var(--mono);font-size:12px;">Loading transactions…</td></tr>
+              <tr><td colspan="5" style="padding:20px;text-align:center;color:var(--text-3);
+                  font-family:var(--mono);font-size:12px;">Loading transactions…</td></tr>
             </tbody>
           </table>
         </div>
       </div>
-      <!-- LP tab -->
-      <div id="journalTab-lp" class="journal-tab-content" style="display:none;flex:1;overflow-y:auto;">
+      <!-- LP -->
+      <div id="journalTab-lp" class="journal-tab-content"
+           style="display:none;flex:1;overflow-y:auto;">
         <div style="overflow-x:auto;height:100%;">
           <table style="width:100%;border-collapse:collapse;">
             <thead>
@@ -574,7 +344,8 @@
               </tr>
             </thead>
             <tbody id="journalLPBody">
-              <tr><td colspan="3" style="padding:20px;text-align:center;color:var(--text-3);font-family:var(--mono);font-size:12px;">Loading LP standings…</td></tr>
+              <tr><td colspan="3" style="padding:20px;text-align:center;color:var(--text-3);
+                  font-family:var(--mono);font-size:12px;">Loading LP standings…</td></tr>
             </tbody>
           </table>
         </div>
@@ -583,20 +354,20 @@
   </div>
 </div>
 
+<!-- ── Console ───────────────────────────────────────────────────────────── -->
 <div class="app-console" id="appConsole">
   <div class="console-statusbar" id="consoleStatusbar">
     <span class="console-label">▶ LOG</span>
-    <span class="console-time" id="console-time"></span>
-    <span class="console-msg" id="console-msg">[System] ESI connection ready...</span>
+    <span class="console-time"  id="console-time"></span>
+    <span class="console-msg"   id="console-msg">[System] ESI connection ready...</span>
     <button class="console-toggle" id="consoleToggleBtn" title="Expand/collapse console log">▲</button>
   </div>
   <div class="console-log" id="consoleLog"></div>
 </div>
 
-</body>
-
-<!-- FIX: Load all split JS files in correct dependency order -->
-
+<!-- ════════════════════════════════════════════════════════════════════════ -->
+<!-- ── JS — load in dependency order; pageLoader must come before app.js ── -->
+<!-- ════════════════════════════════════════════════════════════════════════ -->
 <script src="categories.js"></script>
 <script src="state.js"></script>
 <script src="utils.js"></script>
@@ -609,7 +380,8 @@
 <script src="dashboard.js"></script>
 <script src="bugs.js"></script>
 <script src="planetary-interaction.js"></script>
-<!-- app.js must be last — it calls bindEvents() and DOMContentLoaded init -->
-<script src="app.js"></script>
+<script src="pageLoader.js"></script>  <!-- injects pages/*.html → #navPagesContainer -->
+<script src="app.js"></script>         <!-- must be last -->
 
+</body>
 </html>

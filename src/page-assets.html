@@ -1,0 +1,71 @@
+<!-- ── Assets Page ────────────────────────────────────────────────────────── -->
+<div id="page-assets" class="nav-page"
+     style="flex-direction:column; height:100%;">
+  <div class="page-header">
+    <div>
+      <h2>Assets</h2>
+      <div class="page-description">
+        Loaded instantly from your local database — no ESI call.
+        Sync characters on the Characters page to refresh.
+      </div>
+    </div>
+    <button class="close-page-btn" onclick="closePage('assets')">✕</button>
+  </div>
+
+  <div class="page-content"
+       style="display:flex; flex-direction:column; gap:0; height:100%; overflow:hidden;">
+    <!-- Toolbar -->
+    <div class="asset-toolbar"
+         style="display:flex; flex-wrap:wrap; align-items:center; gap:10px;
+                padding:12px 16px; border-bottom:1px solid var(--border);
+                background:var(--bg-card); flex-shrink:0;">
+      <span id="assetSummary" class="asset-summary" style="margin-right:auto;">
+        Loading assets…
+      </span>
+      <input type="text" id="assetSearch" class="field-input"
+             style="width:220px; padding:7px 10px; font-size:13px;"
+             placeholder="Search items…" oninput="filterAssets()" />
+      <select id="assetCharFilter" class="field-input"
+              style="width:180px; padding:7px 10px; font-size:13px;"
+              onchange="filterAssets()">
+        <option value="">All Characters</option>
+      </select>
+      <select id="assetRegionFilter" class="field-input"
+              style="width:160px; padding:7px 10px; font-size:13px;"
+              onchange="filterAssets()">
+        <option value="">All Regions</option>
+      </select>
+      <button class="icon-btn" onclick="loadAssets()"
+              title="Reload from local DB" style="padding:7px 14px; font-size:12px;">
+        ⟳ RELOAD
+      </button>
+    </div>
+
+    <!-- Table -->
+    <div id="assetTableWrapper" class="asset-table-wrapper" style="flex:1; overflow-y:auto;">
+      <table id="assetTable" class="asset-table">
+        <thead>
+          <tr>
+            <th>Owner</th>
+            <th class="asset-qty-header">Qty</th>
+            <th>Item</th>
+            <th>Location</th>
+            <th>Solar System</th>
+            <th>Region</th>
+            <th>Sec</th>
+            <th>Corp</th>
+            <th>Jita 4-4 Value</th>
+            <th>Volume (m³)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td colspan="10" class="loading-row">
+              No assets loaded yet — sync a character on the Characters page first.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

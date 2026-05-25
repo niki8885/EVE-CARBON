@@ -1,0 +1,45 @@
+<!-- ── Dashboard Page ─────────────────────────────────────────────────────── -->
+<div id="page-dashboard" class="nav-page"
+     style="flex-direction:column; height:100%; min-width:0; overflow:hidden;">
+  <div class="page-header">
+    <div>
+      <h2>Dashboard</h2>
+      <div class="page-description">
+        Command center — net worth, industry jobs, and character status.
+      </div>
+    </div>
+    <button class="close-page-btn" onclick="closePage('dashboard')">&#x2715;</button>
+  </div>
+
+  <div class="page-content"
+       style="display:flex; flex-direction:column; gap:16px; padding:16px; overflow-y:auto;">
+    <!-- Welcome banner -->
+    <div id="dashboardWelcomeBanner" class="dashboard-welcome-banner">
+      <div class="dashboard-welcome-inner">
+        <div class="dashboard-welcome-placeholder">
+          <span style="font-size:32px; color:var(--border-b);">&#x2B21;</span>
+        </div>
+        <div class="dashboard-welcome-text">
+          <div class="dashboard-welcome-greeting">WELCOME BACK, COMMANDER</div>
+          <div id="dashboardMainCharName" class="dashboard-welcome-name">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main grid -->
+    <div id="dashboardContent" class="dashboard-grid" style="position:relative;">
+      <div class="dashboard-panel" id="dashboardSummaryPanel">
+        <div class="dashboard-panel-title">&#x2B21; NET WORTH &amp; WEALTH GROWTH</div>
+        <div id="dashboardNetworthSummary">
+          <div class="loading-row">Loading...</div>
+        </div>
+      </div>
+      <div class="dashboard-panel" id="dashboardJobsPanel">
+        <div class="dashboard-panel-title">&#x25C8; FINISHED INDUSTRY JOBS</div>
+        <div id="dashboardJobsTable">
+          <div class="loading-row">Loading jobs...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
