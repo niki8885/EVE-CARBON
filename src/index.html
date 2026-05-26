@@ -171,6 +171,7 @@
         <button class="settings-menu-btn active"  data-settings-tab="jabber">Jabber</button>
         <button class="settings-menu-btn"          data-settings-tab="forums">Forums</button>
         <button class="settings-menu-btn"          data-settings-tab="fleetCommander">Fleet Commander</button>
+        <button class="settings-menu-btn"          data-settings-tab="database">Database</button>
       </div>
       <!-- Jabber tab -->
       <div id="settingsTabJabber" class="settings-tab">
@@ -218,6 +219,102 @@
           <div class="settings-panel-block">
             <div class="settings-panel-title">Fleet Commander Settings</div>
             <div style="font-size:13px; color:var(--text-2);">Fleet Commander settings are coming soon.</div>
+          </div>
+        </div>
+      </div>
+      <!-- Database tab -->
+      <div id="settingsTabDatabase" class="settings-tab" style="display:none;">
+        <div class="panel" style="padding:16px; margin:0; background:var(--bg-panel); border:none; box-shadow:none;">
+          <div class="settings-panel-block">
+            <div class="settings-panel-title">Database</div>
+            <!-- Warning banner -->
+            <div id="dbSyncWarning" style="
+                display:flex; align-items:flex-start; gap:10px;
+                background:rgba(230,126,34,0.10); border:1px solid var(--warning);
+                border-radius:8px; padding:14px 16px;">
+              <span style="font-size:18px; line-height:1; flex-shrink:0;">⚠</span>
+              <div>
+                <div style="font-size:12px; font-weight:700; color:var(--warning);
+                            letter-spacing:0.08em; margin-bottom:4px;">LONG OPERATION WARNING</div>
+                <div style="font-size:12px; color:var(--text-2); line-height:1.6;">
+                  Syncing the station database downloads and resolves every NPC station
+                  and Upwell structure known to adam4eve — including full solar system,
+                  constellation, and region lookups via ESI.<br/>
+                  <strong style="color:var(--text-1);">This process takes 5+ minutes</strong>
+                  and runs in the background. You can continue using the app, but
+                  network activity will be elevated until it completes.
+                </div>
+              </div>
+            </div>
+            <!-- Status row -->
+            <div style="display:flex; align-items:center; justify-content:space-between;
+                        gap:12px; flex-wrap:wrap;">
+              <div>
+                <div style="font-size:11px; color:var(--text-3); letter-spacing:0.1em;
+                            font-family:var(--mono); margin-bottom:4px;">LAST SYNCED</div>
+                <div id="dbSyncLastSynced"
+                     style="font-size:13px; color:var(--text-1); font-family:var(--mono);">Checking…</div>
+              </div>
+              <div style="display:flex; align-items:center; gap:10px;">
+                <div id="dbSyncStatus"
+                     style="font-size:12px; font-family:var(--mono); color:var(--text-3);
+                            min-width:160px; text-align:right;"></div>
+                <button id="dbSyncStationsBtn" class="calc-btn"
+                        style="display:flex; align-items:center; gap:8px; white-space:nowrap;"
+                        onclick="triggerStationSync()">
+                  <span id="dbSyncBtnIcon">⟳</span>
+                  SYNC NPC STATIONS
+                </button>
+              </div>
+            </div>
+            <!-- NPC station progress bar (hidden until sync starts) -->
+            <div id="dbSyncProgressWrap" style="display:none;">
+              <div style="font-size:11px; color:var(--text-3); font-family:var(--mono);
+                          letter-spacing:0.08em; margin-bottom:6px;" id="dbSyncProgressLabel">Starting…</div>
+              <div style="height:4px; background:var(--bg-deep); border-radius:2px; overflow:hidden;">
+                <div id="dbSyncProgressBar"
+                     style="height:100%; width:0%; background:var(--accent);
+                            border-radius:2px; transition:width 0.4s ease;"></div>
+              </div>
+            </div>
+
+            <!-- Upwell structures row -->
+            <div style="display:flex; align-items:center; justify-content:space-between;
+                        gap:12px; flex-wrap:wrap; margin-top:16px; padding-top:16px;
+                        border-top:1px solid var(--border);">
+              <div>
+                <div style="font-size:11px; color:var(--text-3); letter-spacing:0.1em;
+                            font-family:var(--mono); margin-bottom:4px;">UPWELL STRUCTURES — LAST SYNCED</div>
+                <div id="dbUpwellLastSynced"
+                     style="font-size:13px; color:var(--text-1); font-family:var(--mono);">Checking…</div>
+              </div>
+              <div style="display:flex; align-items:center; gap:10px;">
+                <div id="dbUpwellStatus"
+                     style="font-size:12px; font-family:var(--mono); color:var(--text-3);
+                            min-width:160px; text-align:right;"></div>
+                <button id="dbSyncUpwellBtn" class="calc-btn"
+                        style="display:flex; align-items:center; gap:8px; white-space:nowrap;"
+                        onclick="triggerUpwellSync()">
+                  <span id="dbUpwellBtnIcon">⟳</span>
+                  SYNC UPWELL STRUCTURES
+                </button>
+              </div>
+            </div>
+            <!-- Upwell progress bar (hidden until sync starts) -->
+            <div id="dbUpwellProgressWrap" style="display:none;">
+              <div style="font-size:11px; color:var(--text-3); font-family:var(--mono);
+                          letter-spacing:0.08em; margin-bottom:6px;" id="dbUpwellProgressLabel">Starting…</div>
+              <div style="height:4px; background:var(--bg-deep); border-radius:2px; overflow:hidden;">
+                <div id="dbUpwellProgressBar"
+                     style="height:100%; width:0%; background:var(--accent);
+                            border-radius:2px; transition:width 0.4s ease;"></div>
+              </div>
+            </div>
+
+            <div style="font-size:11px; color:var(--text-3); margin-top:12px;">
+              NPC stations seed automatically on first launch. Both lists refresh every 24 hours;
+              use the buttons above to force an immediate update.
+            </div>
           </div>
         </div>
       </div>

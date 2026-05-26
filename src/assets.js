@@ -49,7 +49,7 @@ async function loadAssets() {
 
     allAssetsCache = allAssets;
 
-    // Populate character and region dropdowns from the loaded data
+    // Populate character, region, and corp dropdowns from the loaded data
     populateAssetFilters(allAssets);
 
     // Apply any filters already set (e.g. user reloaded while filters were active)
@@ -60,6 +60,40 @@ async function loadAssets() {
       wrapper.removeEventListener('scroll', assetTableScrollHandler);
       wrapper.addEventListener('scroll', assetTableScrollHandler);
     }
+
+    // ── Background refresh: re-poll the DB after 5 s and 30 s ───────────────
+    // The locator pipeline resolves structure locations asynchronously after a
+    // sync. Re-loading from the DB a couple of times catches rows that were
+    // NULL on first load but now have region_name / owner_name filled in.
+    // We only re-populate filters + re-render if new data actually arrived.
+    for (const delayMs of [5000, 30000]) {
+      setTimeout(async () => {
+        try {
+          const refreshed = await loadAssetsFromDb();
+          if (!refreshed.length) return;
+
+          // Check if any previously-null region/owner_name fields are now filled
+          const prevNullRegions = allAssetsCache.filter(a => !a.region_name).length;
+          const newNullRegions  = refreshed.filter(a => !a.region_name).length;
+          if (newNullRegions >= prevNullRegions) return; // nothing changed, skip re-render
+
+          allAssetsCache = refreshed;
+          populateAssetFilters(refreshed);
+          // Only re-render if no filter is active — avoids resetting a user's scroll mid-browse
+          const charVal   = document.getElementById('assetCharFilter')?.value   || '';
+          const regionVal = document.getElementById('assetRegionFilter')?.value || '';
+          const corpVal   = document.getElementById('assetCorpFilter')?.value   || '';
+          const searchVal = document.getElementById('assetSearch')?.value       || '';
+          if (!charVal && !regionVal && !corpVal && !searchVal) {
+            filterAssets();
+          } else {
+            // Still re-filter in case the active selection now matches more rows
+            filterAssets();
+          }
+        } catch (e) { /* ignore background refresh errors */ }
+      }, delayMs);
+    }
+
   } catch (err) {
     if (assetTableBody) {
       assetTableBody.innerHTML = `<tr><td colspan="10" class="loading-row">Failed to load assets: ${err.message}</td></tr>`;
@@ -73,11 +107,13 @@ async function loadAssets() {
 function populateAssetFilters(assets) {
   const charSelect   = document.getElementById('assetCharFilter');
   const regionSelect = document.getElementById('assetRegionFilter');
+  const corpSelect   = document.getElementById('assetCorpFilter');
   if (!charSelect || !regionSelect) return;
 
   // Preserve current selections across a reload
   const prevChar   = charSelect.value;
   const prevRegion = regionSelect.value;
+  const prevCorp   = corpSelect?.value || '';
 
   // Characters — unique by id, sorted by name
   const chars = [...new Map(assets.map(a => [String(a.characterId), a.characterName])).entries()]
@@ -91,8 +127,10 @@ function populateAssetFilters(assets) {
     charSelect.appendChild(opt);
   });
 
-  // Regions — unique names, sorted alphabetically, skip blanks
-  const regions = [...new Set(assets.map(a => a.region_name).filter(Boolean))].sort();
+  // Regions — unique names, sorted alphabetically; add an "Unresolved" bucket
+  // for rows where region_name is still NULL so those assets are never invisible.
+  const regions         = [...new Set(assets.map(a => a.region_name).filter(Boolean))].sort();
+  const unresolvedCount = assets.filter(a => !a.region_name).length;
 
   regionSelect.innerHTML = '<option value="">All Regions</option>';
   regions.forEach(name => {
@@ -101,10 +139,29 @@ function populateAssetFilters(assets) {
     opt.textContent = name;
     regionSelect.appendChild(opt);
   });
+  if (unresolvedCount > 0) {
+    const opt = document.createElement('option');
+    opt.value = '__unresolved__';
+    opt.textContent = `(Unresolved — ${unresolvedCount})`;
+    regionSelect.appendChild(opt);
+  }
+
+  // Corps (owner_name) — unique, sorted, skip blanks
+  if (corpSelect) {
+    const corps = [...new Set(assets.map(a => a.owner_name).filter(Boolean))].sort();
+    corpSelect.innerHTML = '<option value="">All Corps</option>';
+    corps.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      corpSelect.appendChild(opt);
+    });
+  }
 
   // Restore previous selections if they still exist
   if (prevChar   && charSelect.querySelector(`option[value="${prevChar}"]`))     charSelect.value   = prevChar;
   if (prevRegion && regionSelect.querySelector(`option[value="${prevRegion}"]`)) regionSelect.value = prevRegion;
+  if (prevCorp   && corpSelect?.querySelector(`option[value="${prevCorp}"]`))    corpSelect.value   = prevCorp;
 }
 
 // ── Filter assets and re-render table ────────────────────────────────────────
@@ -114,14 +171,21 @@ function filterAssets() {
   const searchVal = (document.getElementById('assetSearch')?.value  || '').toLowerCase().trim();
   const charVal   =  document.getElementById('assetCharFilter')?.value   || '';
   const regionVal =  document.getElementById('assetRegionFilter')?.value || '';
+  const corpVal   =  document.getElementById('assetCorpFilter')?.value   || '';
 
   filteredAssetsCache = allAssetsCache.filter(asset => {
     if (charVal   && String(asset.characterId) !== charVal)                           return false;
-    if (regionVal && (asset.region_name || '') !== regionVal)                         return false;
+    if (regionVal === '__unresolved__') {
+      if (asset.region_name) return false;  // keep only unresolved rows
+    } else if (regionVal && (asset.region_name || '') !== regionVal) {
+      return false;
+    }
+    if (corpVal   && (asset.owner_name  || '') !== corpVal)                           return false;
     if (searchVal) {
       const name     = (asset.name     || asset.type_name || '').toLowerCase();
       const location = (asset.location_name || '').toLowerCase();
-      if (!name.includes(searchVal) && !location.includes(searchVal))                return false;
+      const corp     = (asset.owner_name    || '').toLowerCase();
+      if (!name.includes(searchVal) && !location.includes(searchVal) && !corp.includes(searchVal)) return false;
     }
     return true;
   });
@@ -172,13 +236,25 @@ function renderNextAssetChunk() {
     const ownerPortrait = `https://images.evetech.net/characters/${asset.characterId}/portrait?size=64`;
     const location      = asset.location_name      || `ID ${asset.location_id}`;
     const regionName    = asset.region_name         || '—';
-    const secStatus     = typeof asset.security_status === 'number'
-                            ? asset.security_status.toFixed(2)
-                            : '—';
+    const sysName       = asset.solar_system_name   || '—';
+    const corpName      = asset.owner_name          || '—';
     const itemName      = asset.name               || `Type ${asset.type_id}`;
     // quantity is already the grouped/stacked total from the DB query
     const qty           = asset.quantity            || 1;
     const totalVolume   = ((asset.volume || 0) * qty) || 0;
+
+    // Colour-code security status the same way the EVE client does
+    let secDisplay = '—';
+    if (typeof asset.security_status === 'number') {
+      const sec    = asset.security_status;
+      const secStr = sec.toFixed(1);
+      let secColor = '#aaaaaa';
+      if      (sec >= 0.5)  secColor = '#4ecbb0';   // high-sec  teal
+      else if (sec >= 0.1)  secColor = '#e6c84a';   // low-sec   yellow
+      else                  secColor = '#e05252';   // null/WH   red
+      secDisplay = `<span style="color:${secColor};font-family:var(--mono);">${secStr}</span>`;
+    }
+
     return `
       <tr data-type-id="${asset.type_id || ''}" data-index="${start + idx}" data-quantity="${qty}">
         <td class="asset-owner-cell">
@@ -190,10 +266,10 @@ function renderNextAssetChunk() {
         <td class="asset-qty">${qty.toLocaleString()}</td>
         <td>${itemName}</td>
         <td>${location}</td>
-        <td class="asset-constellation">${asset.solar_system_name || '—'}</td>
+        <td class="asset-constellation">${sysName}</td>
         <td class="asset-region">${regionName}</td>
-        <td class="asset-sec">${secStatus}</td>
-        <td class="asset-corp">—</td>
+        <td class="asset-sec">${secDisplay}</td>
+        <td class="asset-corp">${corpName}</td>
         <td class="asset-price" data-type-id="${asset.type_id || ''}">Loading...</td>
         <td>${totalVolume.toFixed(2)}</td>
       </tr>`;

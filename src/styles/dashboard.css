@@ -276,9 +276,9 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 20px 24px;
+  padding: 20px 64px 20px 24px;
   gap: 14px;
-  width: 200px;
+  width: 350px;
   flex-shrink: 0;
   border-left: 1px solid var(--border-e);
 }
@@ -287,9 +287,68 @@
 .banner-extra-label { color: var(--text-c); font-size: 10px; font-family: var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
 .banner-extra-value { color: var(--text-d); font-size: 12px; font-family: var(--mono); font-weight: 500; }
 .banner-implants-section { flex: 1; justify-content: flex-end; }
-.banner-implant-icons { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-.banner-implant-icon { width: 28px; height: 28px; object-fit: contain; border: 1px solid var(--border); border-radius: 3px; background: var(--bg-input); flex-shrink: 0; cursor: default; transition: border-color 0.15s, transform 0.15s; }
-.banner-implant-icon:hover { border-color: var(--accent-50); transform: scale(1.22); z-index: 10; position: relative; }
+
+/* ── TWO-ROW IMPLANT SLOT GRID (slots 1-5 top, 6-10 bottom) ─────────────── */
+.banner-implant-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 2px;
+}
+.implant-grid-row {
+  display: flex;
+  gap: 3px;
+}
+.implant-slot {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color 0.15s, background 0.15s;
+}
+.implant-slot--empty {
+  border: 1px solid var(--border-e);
+  background: var(--bg-input);
+}
+.implant-slot--filled {
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  cursor: default;
+}
+.implant-slot--filled:hover {
+  border-color: var(--accent-50);
+  background: rgba(192, 57, 43, 0.06);
+  z-index: 10;
+}
+/* Slot number badge — top-left corner */
+.implant-slot-num {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  font-size: 6px;
+  font-family: var(--mono);
+  color: var(--text-7);
+  line-height: 1;
+  pointer-events: none;
+}
+.implant-slot--filled .implant-slot-num { color: var(--text-4); }
+/* Icon inside a filled slot */
+.implant-slot .banner-implant-icon {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  border: none;
+  background: transparent;
+  border-radius: 2px;
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+.implant-slot--filled:hover .banner-implant-icon { transform: scale(1.18); }
+/* Kept for any legacy references outside the slot grid */
 .banner-implant-empty { color: var(--text-7); font-size: 10px; font-family: var(--mono); font-style: italic; }
 
 /* ── SHIP COLUMN ── */

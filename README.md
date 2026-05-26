@@ -65,6 +65,13 @@ You can convert a PNG to ICO at https://convertio.co/png-ico/
 
 
 🤝 Special Thanks
-   -Fuzzworks for without Steve none of this would be possible
-   -Adam4EVE  - Station Name resolutions
-   -EVE Rift for making an incredible app, and giving me many ideas and tonnes of inspiration 
+   🤝Fuzzworks for without Steve none of this would be possible
+   🤝Adam4EVE  - Station Name resolutions
+   🤝EVE Rift for making an incredible app, and giving me many ideas and tonnes of inspiration 
+
+
+
+
+
+### For what does what and where
+-- Please check the ./src/docs for more details

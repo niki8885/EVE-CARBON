@@ -9,6 +9,8 @@ function setSettingsTab(tab) {
     const target = `settingsTab${tab.charAt(0).toUpperCase() + tab.slice(1)}`;
     panel.style.display = panel.id === target ? 'block' : 'none';
   });
+  // Populate the database tab with the last-synced timestamp each time it opens
+  if (tab === 'database') populateDatabaseSettings();
 }
 
 function bindUISettings() {
@@ -44,6 +46,7 @@ function bindUISettings() {
 
 async function populateSettingsInputs() {
   await populateJabberSettings();
+  if (currentSettingsTab === 'database') await populateDatabaseSettings();
 }
 
 async function saveAllSettings() {
@@ -191,4 +194,209 @@ function clearSelection() {
   document.getElementById('selectedBpIcon').src = '';
   document.getElementById('selectedBpName').textContent = '';
   document.getElementById('selectedBpMeta').textContent = '';
+}
+// ─── Database Settings Tab ─────────────────────────────────────────────────────
+
+// Called when the Database tab becomes visible — populates both last-synced timestamps.
+async function populateDatabaseSettings() {
+  const npcEl    = document.getElementById('dbSyncLastSynced');
+  const upwellEl = document.getElementById('dbUpwellLastSynced');
+  try {
+    // IPC: getStationSyncTimestamp({ key }) returns ms epoch or 0
+    const npcTs    = await window.eveAPI.getStationSyncTimestamp({ key: 'npc_stations' });
+    const upwellTs = await window.eveAPI.getStationSyncTimestamp({ key: 'upwell_structures' });
+    if (npcEl)    npcEl.textContent    = npcTs    ? _formatSyncAge(npcTs)    : 'Never synced';
+    if (upwellEl) upwellEl.textContent = upwellTs ? _formatSyncAge(upwellTs) : 'Never synced';
+  } catch {
+    if (npcEl)    npcEl.textContent    = 'Unknown';
+    if (upwellEl) upwellEl.textContent = 'Unknown';
+  }
+}
+
+// Format a ms-epoch timestamp as a human-readable age string.
+function _formatSyncAge(ts) {
+  const diff = Date.now() - ts;
+  const mins  = Math.floor(diff / 60_000);
+  const hours = Math.floor(diff / 3_600_000);
+  const days  = Math.floor(diff / 86_400_000);
+  if (mins  <  2)  return 'Just now';
+  if (hours <  1)  return `${mins} minutes ago`;
+  if (days  <  1)  return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+  return `${days} day${days > 1 ? 's' : ''} ago`;
+}
+
+// Triggered by the SYNC UPWELL STRUCTURES button.
+// Mirrors triggerStationSync() but targets the Upwell table.
+async function triggerUpwellSync() {
+  const btn      = document.getElementById('dbSyncUpwellBtn');
+  const icon     = document.getElementById('dbUpwellBtnIcon');
+  const status   = document.getElementById('dbUpwellStatus');
+  const progress = document.getElementById('dbUpwellProgressWrap');
+  const progBar  = document.getElementById('dbUpwellProgressBar');
+  const progLbl  = document.getElementById('dbUpwellProgressLabel');
+  const lastEl   = document.getElementById('dbUpwellLastSynced');
+
+  if (!btn || btn.disabled) return;
+
+  btn.disabled      = true;
+  btn.style.opacity = '0.6';
+  btn.style.cursor  = 'not-allowed';
+  if (icon)    icon.style.animation    = 'spin 1s linear infinite';
+  if (status)  status.textContent      = 'Starting sync…';
+  if (progress) progress.style.display = 'block';
+
+  const stages = [
+    { pct: 20, label: 'Downloading Upwell structure list from Hoboleaks SDE…', delay:     0 },
+    { pct: 85, label: 'Resolving system and region names via ESI…',             delay: 20000 },
+  ];
+  const stageTimers = stages.map(s =>
+    setTimeout(() => {
+      if (progBar) progBar.style.width = `${s.pct}%`;
+      if (progLbl) progLbl.textContent = s.label;
+      if (status)  status.textContent  = `${s.pct}% complete…`;
+    }, s.delay)
+  );
+
+  try {
+    const result = await window.eveAPI.syncUpwellDatabase({ force: true });
+    stageTimers.forEach(clearTimeout);
+
+    if (result && !result.skipped) {
+      if (progBar) progBar.style.width = '100%';
+      if (progLbl) progLbl.textContent = `Done — ${result.upwell} Upwell structures synced.`;
+      if (status)  status.textContent  = '✓ Sync complete';
+      if (lastEl)  lastEl.textContent  = 'Just now';
+      showToast(`Upwell sync complete: ${result.upwell} structures.`, 'success');
+    } else {
+      if (progBar) progBar.style.width = '100%';
+      if (progLbl) progLbl.textContent = result?.error ? `Error: ${result.error}` : 'Already up to date.';
+      if (status)  status.textContent  = result?.error ? '✗ Sync failed' : '✓ Already fresh';
+      if (!result?.error) showToast('Upwell structure list is already up to date.', 'info');
+    }
+  } catch (e) {
+    stageTimers.forEach(clearTimeout);
+    if (progBar) { progBar.style.width = '100%'; progBar.style.background = 'var(--danger)'; }
+    if (progLbl) progLbl.textContent = `Error: ${e.message}`;
+    if (status)  status.textContent  = '✗ Sync failed';
+    showToast(`Upwell sync failed: ${e.message}`, 'error');
+  } finally {
+    setTimeout(() => {
+      btn.disabled      = false;
+      btn.style.opacity = '';
+      btn.style.cursor  = '';
+      if (icon) icon.style.animation = '';
+      setTimeout(() => {
+        if (progress) progress.style.display = 'none';
+        if (progBar)  { progBar.style.width = '0%'; progBar.style.background = ''; }
+        if (progLbl)  progLbl.textContent = '';
+        if (status)   status.textContent  = '';
+      }, 4000);
+    }, 3000);
+  }
+}
+
+// ─── First-run auto-seed ───────────────────────────────────────────────────────
+// Called once from app.js on startup (after the DB is initialised).
+// If npc_stations has never been synced, kicks off a silent background seed
+// so the app has location data available without the user needing to open Settings.
+async function autoSeedNpcStations() {
+  try {
+    const ts = await window.eveAPI.getStationSyncTimestamp({ key: 'npc_stations' });
+    if (ts && ts > 0) return; // already seeded — nothing to do
+
+    console.log('[AutoSeed] npc_stations table is empty — running first-run seed…');
+    showToast('First launch: seeding NPC station database in the background…', 'info');
+
+    const result = await window.eveAPI.syncStationDatabase({ force: false }); // force:false respects 24-hr guard on subsequent calls
+    if (result && !result.skipped && !result.error) {
+      console.log(`[AutoSeed] Seed complete — ${result.npc} NPC stations loaded.`);
+      showToast(`Station database ready: ${result.npc} NPC stations loaded.`, 'success');
+    } else if (result?.error) {
+      console.warn('[AutoSeed] Seed failed:', result.error);
+    }
+  } catch (e) {
+    console.warn('[AutoSeed] autoSeedNpcStations error:', e.message);
+  }
+}
+async function triggerStationSync() {
+  const btn      = document.getElementById('dbSyncStationsBtn');
+  const icon     = document.getElementById('dbSyncBtnIcon');
+  const status   = document.getElementById('dbSyncStatus');
+  const progress = document.getElementById('dbSyncProgressWrap');
+  const progBar  = document.getElementById('dbSyncProgressBar');
+  const progLbl  = document.getElementById('dbSyncProgressLabel');
+  const lastEl   = document.getElementById('dbSyncLastSynced');
+
+  if (!btn) return;
+  if (btn.disabled) return; // already running
+
+  // ── Lock UI ─────────────────────────────────────────────────────────────────
+  btn.disabled    = true;
+  btn.style.opacity = '0.6';
+  btn.style.cursor  = 'not-allowed';
+  if (icon)    icon.style.animation = 'spin 1s linear infinite';
+  if (status)  status.textContent   = 'Starting sync…';
+  if (progress) progress.style.display = 'block';
+
+  // Animate the progress bar in two stages while the backend runs.
+  // Typical sync duration is 30-60 s (Hoboleaks download + ESI name resolution):
+  //   0 → 20%  immediately (downloading Hoboleaks SDE station list)
+  //   20 → 85% over 20 s  (bulk ESI name resolution for systems/regions)
+  //   85 → 99% hold until IPC resolves
+  const stages = [
+    { pct: 20,  label: 'Downloading NPC station list from Hoboleaks SDE…', delay:     0 },
+    { pct: 85,  label: 'Resolving system and region names via ESI…',       delay: 20000 },
+  ];
+  let stageTimers = [];
+  for (const s of stages) {
+    const t = setTimeout(() => {
+      if (progBar) progBar.style.width = `${s.pct}%`;
+      if (progLbl) progLbl.textContent = s.label;
+      if (status)  status.textContent  = `${s.pct}% complete…`;
+    }, s.delay);
+    stageTimers.push(t);
+  }
+
+  try {
+    // This call blocks until syncStationDatabase() resolves (can be 5+ min).
+    const result = await window.eveAPI.syncStationDatabase({ force: true });
+
+    // Clear staged timers — we're done
+    stageTimers.forEach(clearTimeout);
+
+    if (result && !result.skipped) {
+      if (progBar) progBar.style.width = '100%';
+      if (progLbl) progLbl.textContent = `Done — ${result.npc} NPC stations, ${result.upwell} Upwell structures synced.`;
+      if (status)  status.textContent  = '✓ Sync complete';
+      if (lastEl)  lastEl.textContent  = 'Just now';
+      showToast(`Station sync complete: ${result.npc} NPC + ${result.upwell} Upwell structures.`, 'success');
+    } else {
+      if (progBar) progBar.style.width = '100%';
+      if (progLbl) progLbl.textContent = result?.error ? `Error: ${result.error}` : 'Already up to date.';
+      if (status)  status.textContent  = result?.error ? '✗ Sync failed' : '✓ Already fresh';
+      if (!result?.error) showToast('Station list is already up to date.', 'info');
+    }
+  } catch (e) {
+    stageTimers.forEach(clearTimeout);
+    if (progBar) progBar.style.width = '100%';
+    if (progBar) progBar.style.background = 'var(--danger)';
+    if (progLbl) progLbl.textContent = `Error: ${e.message}`;
+    if (status)  status.textContent  = '✗ Sync failed';
+    showToast(`Station sync failed: ${e.message}`, 'error');
+  } finally {
+    // ── Unlock UI after 3 s so the user can read the result ──────────────────
+    setTimeout(() => {
+      btn.disabled      = false;
+      btn.style.opacity = '';
+      btn.style.cursor  = '';
+      if (icon) icon.style.animation = '';
+      // Hide progress bar and reset for next run
+      setTimeout(() => {
+        if (progress) progress.style.display = 'none';
+        if (progBar)  { progBar.style.width = '0%'; progBar.style.background = ''; }
+        if (progLbl)  progLbl.textContent = '';
+        if (status)   status.textContent  = '';
+      }, 4000);
+    }, 3000);
+  }
 }

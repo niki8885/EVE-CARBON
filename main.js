@@ -156,7 +156,14 @@ function writeCache(key, value, days = 7) {
 // Locator: shared location resolver (player structures + NPC stations)
 let locator = null;
 function getLocator() {
-  if (!locator) locator = createLocator({ httpGet, readCache, writeCache, getValidToken });
+  if (!locator) locator = createLocator({
+    httpGet, readCache, writeCache, getValidToken,
+    // Pass the shared station DB helpers so the locator checks local tables
+    // before hitting any external network source (Step 0 fast-path).
+    getStationById:         (...a) => charInfoDb.getStationById(...a),
+    upsertNpcStations:      (...a) => charInfoDb.upsertNpcStations(...a),
+    upsertUpwellStructures: (...a) => charInfoDb.upsertUpwellStructures(...a),
+  });
   return locator;
 }
 
@@ -569,6 +576,34 @@ ipcMain.handle('get-all-blueprints', () => {
   return all;
 });
 
+// ─── Implant slot resolver ────────────────────────────────────────────────────
+// ESI's /v1/characters/{id}/implants/ returns type IDs in no guaranteed order.
+// Dogma attribute 331 ("implantness") on each type holds the real slot (1-10).
+// Results are cached in nameCache so each type is only looked up once per session.
+async function resolveImplantSlots(typeIds) {
+  const slotMap = {};
+  await Promise.all(typeIds.map(async (id) => {
+    const cacheKey = `implant_slot_${id}`;
+    if (nameCache[cacheKey] !== undefined) {
+      slotMap[id] = nameCache[cacheKey];
+      return;
+    }
+    try {
+      const typeData = await httpGet(
+        `${ESI_BASE}/v3/universe/types/${id}/?datasource=tranquility`
+      );
+      const attr = (typeData?.dogma_attributes || []).find(a => a.attribute_id === 331);
+      const slot = attr ? Math.round(attr.value) : null;
+      nameCache[cacheKey] = slot;
+      slotMap[id] = slot;
+    } catch (_) {
+      nameCache[cacheKey] = null;
+      slotMap[id] = null;
+    }
+  }));
+  return slotMap;
+}
+
 // ─── Full character data sync ─────────────────────────────────────────────────
 // Syncs everything: info, wallet, location, ship, implants, PI, assets, blueprints
 // into character_information.db.  Called on first SSO login AND on manual re-sync.
@@ -667,13 +702,14 @@ async function fullCharacterSync(characterId, characterName, progressCb) {
       activeImplants = await httpGet(`${ESI_BASE}/v1/characters/${characterId}/implants/?datasource=tranquility`, authHdr);
     } catch (_) {}
 
-    // Resolve implant type names
+    // Resolve implant type names and real slot numbers (dogma attribute 331)
     const allImplantIds = [...new Set(activeImplants || [])];
     const implantNames = allImplantIds.length ? await resolveNames(allImplantIds) : {};
-    const implants = allImplantIds.map((id, i) => ({
+    const slotMap      = allImplantIds.length ? await resolveImplantSlots(allImplantIds) : {};
+    const implants = allImplantIds.map(id => ({
       implant_id: id,
       type_name:  implantNames[id] || `Type ${id}`,
-      slot:       i + 1,
+      slot:       slotMap[id] ?? null,
     }));
     await charInfoDb.replaceImplants(characterId, implants);
     summary.steps.implants = `${implants.length} active`;
@@ -759,7 +795,8 @@ async function fullCharacterSync(characterId, characterName, progressCb) {
         type_id:           asset.type_id,
         name:              nameMap[asset.type_id] || `Type ${asset.type_id}`,
         location_id:       asset.location_id,
-        location_name:     loc.name || `Location ${asset.location_id}`,
+        // Store null (not a placeholder string) so getUnresolvedAssetLocations() can find it
+        location_name:     loc.name || null,
         location_flag:     asset.location_flag || '',
         quantity:          asset.is_singleton ? 1 : (asset.quantity || 1),
         is_singleton:      asset.is_singleton,
@@ -768,12 +805,35 @@ async function fullCharacterSync(characterId, characterName, progressCb) {
         region_id:         loc.region_id         || null,
         region_name:       loc.region_name       || null,
         security_status:   typeof loc.security_status === 'number' ? loc.security_status : null,
+        owner_id:          loc.owner_id          || null,
+        owner_name:        loc.owner_name        || null,
       };
     });
 
     await charInfoDb.replaceAssets(characterId, assets);
     summary.steps.assets = `${assets.length} items`;
     report('assets', `✓ ${assets.length} assets stored`);
+
+    // ── Re-resolve any locations that came back null ───────────────────────────
+    // Upwell structures that 401'd or missed Hammertime get a second pass here.
+    // The locator's file cache is now warm, so many will succeed this time.
+    const unresolved = await charInfoDb.getUnresolvedAssetLocations(characterId).catch(() => []);
+    if (unresolved.length) {
+      report('assets', `  Re-resolving ${unresolved.length} unresolved structure location(s)…`);
+      for (const locationId of unresolved) {
+        try {
+          const geo = await getLocator().resolveLocation(locationId, characterId);
+          if (geo && (geo.name || geo.solar_system_id)) {
+            await charInfoDb.updateAssetLocation(characterId, locationId, geo);
+          }
+        } catch (e) {
+          console.log(`[CharSync] Re-resolve failed for location ${locationId}: ${e.message}`);
+        }
+      }
+      const stillUnresolved = await charInfoDb.getUnresolvedAssetLocations(characterId).catch(() => []);
+      const fixed = unresolved.length - stillUnresolved.length;
+      report('assets', `  Location re-resolve: ${fixed} fixed, ${stillUnresolved.length} still pending.`);
+    }
   } catch (e) {
     summary.steps.assets = `error: ${e.message}`;
     report('assets', `✗ ${e.message}`);
@@ -976,7 +1036,8 @@ async function coreCharacterSync(characterId, characterName, progressCb) {
     try { activeImplants = await httpGet(`${ESI_BASE}/v1/characters/${characterId}/implants/?datasource=tranquility`, authHdr); } catch (_) {}
     const allImplantIds  = [...new Set(activeImplants || [])];
     const implantNames   = allImplantIds.length ? await resolveNames(allImplantIds) : {};
-    const implants = allImplantIds.map((id, i) => ({ implant_id: id, type_name: implantNames[id] || `Type ${id}`, slot: i + 1 }));
+    const slotMap        = allImplantIds.length ? await resolveImplantSlots(allImplantIds) : {};
+    const implants = allImplantIds.map(id => ({ implant_id: id, type_name: implantNames[id] || `Type ${id}`, slot: slotMap[id] ?? null }));
     await charInfoDb.replaceImplants(characterId, implants);
     summary.steps.implants = `${implants.length} active`;
     report('implants', `✓ ${implants.length} active implants`);
@@ -1405,14 +1466,13 @@ async function syncAssetsInternal(characterId) {
 
   const typeIds     = [...new Set(allAssets.map(a => a.type_id).filter(Boolean))];
   const locationIds = [...new Set(allAssets.map(a => a.location_id).filter(Boolean))];
-  const nameMap     = await resolveNames(typeIds);  // type names only
+  const nameMap     = await resolveNames(typeIds);
 
   // Resolve all location metadata via the shared locator module.
-  // Handles NPC stations, player structures (ESI auth -> public -> adam4eve), and system IDs.
+  // Handles NPC stations, player structures (ESI auth -> Hammertime -> zKillboard -> adam4eve).
   const locationMeta = await getLocator().resolveLocations(locationIds, characterId);
 
-
-  // locationMeta[id] now has the full locator shape:
+  // locationMeta[id] has the full locator shape:
   //   { name, solar_system_id, solar_system_name, constellation_id, constellation_name,
   //     region_id, region_name, security_status, owner_id, owner_name }
   const assets = allAssets.map(asset => {
@@ -1422,7 +1482,8 @@ async function syncAssetsInternal(characterId) {
       type_id:            asset.type_id,
       name:               nameMap[asset.type_id] || `Type ${asset.type_id}`,
       location_id:        asset.location_id,
-      location_name:      loc.name || `Location ${asset.location_id}`,
+      // Store null (not a placeholder string) so getUnresolvedAssetLocations() can find it
+      location_name:      loc.name || null,
       quantity:           asset.is_singleton ? 1 : (asset.quantity || 1),
       volume:             asset.volume || 0,
       is_singleton:       asset.is_singleton,
@@ -1439,10 +1500,40 @@ async function syncAssetsInternal(characterId) {
     };
   });
 
+  // ── Write to SQLite (character_information.db) ───────────────────────────────
+  // This is the primary store the assets page reads from. Always write here so
+  // the 12-hour stale sync keeps the DB current, not just blueprints.json.
+  await charInfoDb.ensureCharacterTables(characterId);
+  await charInfoDb.replaceAssets(characterId, assets);
+
+  // ── Re-resolve any locations that came back null ─────────────────────────────
+  // Some Upwell structures fail on first pass (401, Hammertime miss, etc.).
+  // After replaceAssets the DB has nulls for those rows. We do a second targeted
+  // pass — the locator's internal cache + Hammertime will often succeed on a
+  // retry now that external caches may have been primed.
+  const unresolved = await charInfoDb.getUnresolvedAssetLocations(characterId).catch(() => []);
+  if (unresolved.length) {
+    console.log(`[AssetSync] Re-resolving ${unresolved.length} unresolved location(s) for character ${characterId}...`);
+    for (const locationId of unresolved) {
+      try {
+        const geo = await getLocator().resolveLocation(locationId, characterId);
+        if (geo && (geo.name || geo.solar_system_id)) {
+          await charInfoDb.updateAssetLocation(characterId, locationId, geo);
+        }
+      } catch (e) {
+        console.log(`[AssetSync] Re-resolve failed for location ${locationId}: ${e.message}`);
+      }
+    }
+    const stillUnresolved = await charInfoDb.getUnresolvedAssetLocations(characterId).catch(() => []);
+    console.log(`[AssetSync] Re-resolve complete: ${unresolved.length - stillUnresolved.length} fixed, ${stillUnresolved.length} still unresolved.`);
+  }
+
+  // ── Also keep the legacy blueprints.json in sync ─────────────────────────────
   const db = loadDB();
   db.assets = db.assets || {};
   db.assets[characterId] = { updatedAt: Date.now(), items: assets };
   saveDB(db);
+
   return { count: assets.length, items: assets };
 }
 
@@ -1666,6 +1757,59 @@ ipcMain.handle('resolve-location', async (_, locationId, characterId) => {
 
 ipcMain.handle('resolve-system-names', async (_, systemIds) => {
   return getLocator().resolveSystemNames(systemIds);
+});
+
+// ─── IPC: Station / structure database sync ───────────────────────────────────
+// Thin wrapper — all sync logic lives in locator.syncStationDatabase() so
+// the locator remains the single authority on station/structure data.
+//
+// Returns { npc, upwell } on success, { skipped: true } if under 24 h old,
+// or { error: string } on failure.
+const STATION_SYNC_TTL_MS = 24 * 60 * 60 * 1000;
+
+ipcMain.handle('sync-station-database', async (_, opts = {}) => {
+  const force = opts && opts.force === true;
+
+  // Freshness guard — skip if synced recently and caller didn't force.
+  if (!force) {
+    const lastSync = await charInfoDb.getStationsLastSync('npc_stations').catch(() => 0);
+    if (Date.now() - lastSync < STATION_SYNC_TTL_MS) {
+      console.log('[StationSync] Skipped — synced less than 24 h ago.');
+      return { skipped: true };
+    }
+  }
+
+  try {
+    await charInfoDb.initStationTables();
+    // Delegate entirely to the locator; pass httpPost so the locator can use
+    // the same POST helper (with auth headers, retries, etc.) as the rest of main.
+    const result = await getLocator().syncStationDatabase({ httpPost });
+    console.log(`[StationSync] IPC result: npc=${result.npc}, upwell=${result.upwell}, error=${result.error || 'none'}`);
+    return result;
+  } catch (e) {
+    console.error('[StationSync] Fatal error:', e.message, e.stack);
+    return { error: e.message };
+  }
+});
+
+// Returns the ms-epoch timestamp of the last successful station sync, or 0.
+// Accepts optional { key } — defaults to 'npc_stations'.
+ipcMain.handle('get-station-sync-timestamp', async (_, opts = {}) => {
+  const key = (opts && opts.key) || 'npc_stations';
+  try {
+    return await charInfoDb.getStationsLastSync(key);
+  } catch {
+    return 0;
+  }
+});
+
+// Upwell structures sync — placeholder for future implementation.
+// Currently a no-op that returns { upwell: 0, skipped: false } so the UI
+// button works without errors. Upwell structures are populated automatically
+// as characters are synced (locator._persistToStationDb).
+ipcMain.handle('sync-upwell-database', async (_, opts = {}) => {
+  console.log('[UpwellSync] Manual trigger — structures are seeded automatically during character syncs.');
+  return { npc: 0, upwell: 0 };
 });
 
 ipcMain.handle('esi-search', async (_, query) => {

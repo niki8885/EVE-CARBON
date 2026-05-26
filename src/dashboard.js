@@ -170,23 +170,43 @@ async function loadDashboard() {
       const staleNote = stale
         ? `<span style="color:var(--text-3);font-size:9px;font-family:var(--mono);margin-left:6px;">● LIVE</span>` : '';
 
-      // ── Implant icons HTML ───────────────────────────────────────────────
-      // implants: { implant_id, type_name } — icons from Fuzzworks with evetech fallback
-      const implantIconsHtml = implants.length
-        ? implants
-            .sort((a, b) => (a.implant_id || 0) - (b.implant_id || 0))
-            .map(row => {
-              const id    = row.implant_id;
-              const label = escHtml(row.type_name || `Implant ${id}`);
-              const fuzz  = `https://www.fuzzwork.co.uk/icons/items/${id}_32.png`;
-              const eve   = `https://images.evetech.net/types/${id}/icon?size=32`;
-              return `<img class="banner-implant-icon"
-                 src="${fuzz}"
-                 alt="${label}"
-                 title="${label}"
-                 onerror="if(this._f){this.style.display='none';}else{this._f=1;this.src='${eve}';}"/>`;
-            }).join('')
-        : `<span class="banner-implant-empty">No implants</span>`;
+      // ── Implant slot grid HTML (slots 1-5 top row, 6-10 bottom row) ────────
+      // Builds a slot→implant lookup using the real slot number stored in the DB
+      // (written by resolveImplantSlots() in main.js via dogma attribute 331).
+      // If a slot number is missing/null (old pre-fix DB data), implants are
+      // placed into the first available free slot as a graceful fallback.
+      function buildImplantGrid(implants) {
+        const bySlot = {};
+        const unslotted = [];
+        for (const row of implants) {
+          const s = Number(row.slot);
+          if (s >= 1 && s <= 10) { bySlot[s] = row; }
+          else { unslotted.push(row); }
+        }
+        let nextFree = 1;
+        for (const row of unslotted) {
+          while (bySlot[nextFree] && nextFree <= 10) nextFree++;
+          if (nextFree <= 10) { bySlot[nextFree] = row; nextFree++; }
+        }
+        function slotHtml(slot) {
+          const row = bySlot[slot];
+          if (!row) {
+            return `<div class="implant-slot implant-slot--empty" title="Slot ${slot}"><span class="implant-slot-num">${slot}</span></div>`;
+          }
+          const id    = row.implant_id;
+          const label = escHtml(row.type_name || `Implant ${id}`);
+          const fuzz  = `https://www.fuzzwork.co.uk/icons/items/${id}_32.png`;
+          const eve   = `https://images.evetech.net/types/${id}/icon?size=32`;
+          return `<div class="implant-slot implant-slot--filled" title="${label}">
+            <span class="implant-slot-num">${slot}</span>
+            <img class="banner-implant-icon" src="${fuzz}" alt="${label}"
+                 onerror="if(this._f){this.style.display='none';}else{this._f=1;this.src='${eve}';}"/>
+          </div>`;
+        }
+        return `<div class="implant-grid-row">${[1,2,3,4,5].map(slotHtml).join('')}</div>` +
+               `<div class="implant-grid-row">${[6,7,8,9,10].map(slotHtml).join('')}</div>`;
+      }
+      const implantIconsHtml = buildImplantGrid(implants);
 
       // ── Ship column HTML ─────────────────────────────────────────────────
       const shipColHtml = currentShipTypeId ? `
@@ -248,7 +268,7 @@ async function loadDashboard() {
             </div>
             <div class="banner-extra-section banner-implants-section">
               <div class="banner-extra-label">Active Implants</div>
-              <div class="banner-implant-icons" id="bannerImplantIcons">${implantIconsHtml}</div>
+              <div class="banner-implant-grid" id="bannerImplantIcons">${implantIconsHtml}</div>
             </div>
           </div>
         </div>

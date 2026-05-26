@@ -59,6 +59,11 @@ contextBridge.exposeInMainWorld('eveAPI', {
   getAssets:     (charId) => ipcRenderer.invoke('get-assets', charId),
   getAllAssets:   ()       => ipcRenderer.invoke('get-all-assets'),
 
+  // Station / structure database sync
+  syncStationDatabase:     (opts) => ipcRenderer.invoke('sync-station-database', opts),
+  syncUpwellDatabase:      (opts) => ipcRenderer.invoke('sync-upwell-database', opts),
+  getStationSyncTimestamp: (opts) => ipcRenderer.invoke('get-station-sync-timestamp', opts),
+
   // SDE
   sdeGetName: (id) => ipcRenderer.invoke('sde-get-name', id),
 

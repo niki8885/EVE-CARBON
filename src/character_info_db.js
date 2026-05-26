@@ -126,12 +126,15 @@ async function ensureCharacterTables(characterId) {
       location_name      TEXT,
       location_flag      TEXT,
       quantity           INTEGER,
+      volume             REAL,
       is_singleton       INTEGER,
       solar_system_id    INTEGER,
       solar_system_name  TEXT,
       region_id          INTEGER,
       region_name        TEXT,
       security_status    REAL,
+      owner_id           INTEGER,
+      owner_name         TEXT,
       synced_at          INTEGER
     );
 
@@ -193,6 +196,23 @@ async function ensureCharacterTables(characterId) {
       synced_at         INTEGER
     );
   `);
+
+  // ── Migrate existing tables: add columns that may be missing ────────────────
+  // Safe to run on every startup — ALTER TABLE IF NOT EXISTS is not valid SQL,
+  // so we catch errors silently for columns that already exist.
+  const migrateColumns = [
+    [`ALTER TABLE ${p}_assets ADD COLUMN volume REAL`, `${p}_assets.volume`],
+    [`ALTER TABLE ${p}_assets ADD COLUMN owner_id INTEGER`, `${p}_assets.owner_id`],
+    [`ALTER TABLE ${p}_assets ADD COLUMN owner_name TEXT`, `${p}_assets.owner_name`],
+  ];
+  for (const [sql, label] of migrateColumns) {
+    try {
+      await db.run(sql);
+      console.log(`[CharDB] Migration applied: ${label}`);
+    } catch (_) {
+      // Column already exists — ignore
+    }
+  }
 }
 
 // ── Upsert helpers ────────────────────────────────────────────────────────────
@@ -344,21 +364,82 @@ async function replaceAssets(characterId, assets) {
       await db.run(
         `INSERT OR REPLACE INTO ${p}_assets
            (item_id, type_id, type_name, location_id, location_name,
-            location_flag, quantity, is_singleton, solar_system_id,
-            solar_system_name, region_id, region_name, security_status, synced_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            location_flag, quantity, volume, is_singleton, solar_system_id,
+            solar_system_name, region_id, region_name, security_status,
+            owner_id, owner_name, synced_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           a.item_id, a.type_id, a.name || a.type_name || '',
-          a.location_id, a.location_name || '', a.location_flag || '',
-          a.quantity || 1, a.is_singleton ? 1 : 0,
+          a.location_id, a.location_name || null, a.location_flag || '',
+          a.quantity || 1, a.volume != null ? a.volume : null,
+          a.is_singleton ? 1 : 0,
           a.solar_system_id || null, a.solar_system_name || null,
           a.region_id || null, a.region_name || null,
           a.security_status != null ? a.security_status : null,
+          a.owner_id   || null, a.owner_name   || null,
           now,
         ]
       );
     }
     await db.run('COMMIT');
+  }
+}
+
+// ── Asset location patch ──────────────────────────────────────────────────────
+// Called after resolveLocation() resolves a location_id so we can permanently
+// store the geo data in the row instead of relying on the cache every read.
+//
+// locationData shape (same as locator.resolveLocation output):
+//   { name, solar_system_id, solar_system_name, constellation_id,
+//     constellation_name, region_id, region_name, security_status,
+//     owner_id, owner_name }
+async function updateAssetLocation(characterId, locationId, locationData) {
+  if (!charDb) return;
+  const p = `char_${characterId}`;
+  try {
+    await charDb.run(
+      `UPDATE ${p}_assets SET
+         location_name     = COALESCE(?, location_name),
+         solar_system_id   = COALESCE(?, solar_system_id),
+         solar_system_name = COALESCE(?, solar_system_name),
+         region_id         = COALESCE(?, region_id),
+         region_name       = COALESCE(?, region_name),
+         security_status   = COALESCE(?, security_status),
+         owner_id          = COALESCE(?, owner_id),
+         owner_name        = COALESCE(?, owner_name)
+       WHERE location_id = ?`,
+      [
+        locationData.name              || null,
+        locationData.solar_system_id   || null,
+        locationData.solar_system_name || null,
+        locationData.region_id         || null,
+        locationData.region_name       || null,
+        locationData.security_status   != null ? locationData.security_status : null,
+        locationData.owner_id          || null,
+        locationData.owner_name        || null,
+        locationId,
+      ]
+    );
+  } catch (e) {
+    console.error(`[CharDB] updateAssetLocation failed for location ${locationId}:`, e.message);
+  }
+}
+
+// Returns distinct location_ids in the assets table that are still unresolved
+// (location_name is NULL or empty, or solar_system_id is NULL).
+// Used by the sync pipeline to know what still needs a locator call.
+async function getUnresolvedAssetLocations(characterId) {
+  if (!charDb) return [];
+  try {
+    const rows = await charDb.all(
+      `SELECT DISTINCT location_id FROM char_${characterId}_assets
+       WHERE location_name IS NULL OR location_name = ''
+          OR solar_system_id IS NULL`
+    );
+    return rows.map(r => r.location_id);
+  } catch (e) {
+    console.error(`[CharDB] getUnresolvedAssetLocations failed for ${characterId}:`, e.message);
+    return [];
   }
 }
 
@@ -420,12 +501,15 @@ async function getCharacterAssets(characterId) {
         location_name,
         location_flag,
         SUM(quantity)          AS quantity,
+        SUM(COALESCE(volume, 0) * quantity) AS volume,
         MAX(is_singleton)      AS is_singleton,
         solar_system_id,
         solar_system_name,
         region_id,
         region_name,
         security_status,
+        owner_id,
+        owner_name,
         MAX(synced_at)         AS synced_at
       FROM char_${characterId}_assets
       GROUP BY type_id, location_id
@@ -597,7 +681,6 @@ async function removeCharacterData(characterId) {
 async function getCharacterPIColonies(characterId) {
   if (!charDb) return [];
   try {
-    // Assuming your table is named char_{id}_pi_colonies
     return await charDb.all(`
       SELECT * FROM char_${characterId}_pi_colonies 
       ORDER BY upgrade_level DESC
@@ -619,6 +702,8 @@ module.exports = {
   replaceJumpClones,
   replacePiColonies,
   replaceAssets,
+  updateAssetLocation,
+  getUnresolvedAssetLocations,
   replaceBlueprints,
   replaceWalletJournal,
   getWalletJournal,
@@ -633,4 +718,161 @@ module.exports = {
   getCharacterBlueprints,
   removeCharacterData,
   getCharacterPIColonies,
+  // ── Shared station / structure DB ──
+  initStationTables,
+  getStationsLastSync,
+  upsertNpcStations,
+  upsertUpwellStructures,
+  getStationById,
 };
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── Shared Station / Structure Database ──────────────────────────────────────
+// These tables are NOT per-character — they are shared across all characters
+// and hold the full adam4eve station list + resolved geo data.
+// Tables:  npc_stations      [id, name, solar_system_id, solar_system_name,
+//                             region_id, region_name, security_status]
+//          upwell_structures [id, name, solar_system_id, solar_system_name,
+//                             region_id, region_name, security_status]
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function initStationTables() {
+  if (!charDb) throw new Error('[CharDB] DB not initialised — call initCharacterDb first');
+  await charDb.exec(`
+    CREATE TABLE IF NOT EXISTS npc_stations (
+      id               INTEGER PRIMARY KEY,
+      name             TEXT    NOT NULL,
+      solar_system_id  INTEGER,
+      solar_system_name TEXT,
+      region_id        INTEGER,
+      region_name      TEXT,
+      security_status  REAL,
+      synced_at        INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS upwell_structures (
+      id               INTEGER PRIMARY KEY,
+      name             TEXT    NOT NULL,
+      solar_system_id  INTEGER,
+      solar_system_name TEXT,
+      region_id        INTEGER,
+      region_name      TEXT,
+      security_status  REAL,
+      synced_at        INTEGER
+    );
+
+    -- Tracks when each table was last fully synced from adam4eve.
+    -- key is 'npc_stations' or 'upwell_structures'.
+    CREATE TABLE IF NOT EXISTS station_sync_meta (
+      key        TEXT PRIMARY KEY,
+      synced_at  INTEGER NOT NULL
+    );
+  `);
+  console.log('[CharDB] Station tables ready.');
+}
+
+// Returns the last full-sync timestamp (ms) for a given table key,
+// or 0 if it has never been synced.
+async function getStationsLastSync(key) {
+  if (!charDb) return 0;
+  try {
+    const row = await charDb.get(
+      `SELECT synced_at FROM station_sync_meta WHERE key = ?`, key
+    );
+    return row?.synced_at || 0;
+  } catch { return 0; }
+}
+
+// Bulk-upsert NPC stations. rows = [{ id, name, solar_system_id,
+// solar_system_name, region_id, region_name, security_status }]
+async function upsertNpcStations(rows) {
+  if (!charDb || !rows.length) return;
+  const now = Date.now();
+  await charDb.run('BEGIN');
+  try {
+    for (const r of rows) {
+      await charDb.run(
+        `INSERT INTO npc_stations
+           (id, name, solar_system_id, solar_system_name, region_id, region_name, security_status, synced_at)
+         VALUES (?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET
+           name              = excluded.name,
+           solar_system_id   = COALESCE(excluded.solar_system_id,   solar_system_id),
+           solar_system_name = COALESCE(excluded.solar_system_name, solar_system_name),
+           region_id         = COALESCE(excluded.region_id,         region_id),
+           region_name       = COALESCE(excluded.region_name,       region_name),
+           security_status   = COALESCE(excluded.security_status,   security_status),
+           synced_at         = excluded.synced_at`,
+        [r.id, r.name,
+         r.solar_system_id   || null, r.solar_system_name || null,
+         r.region_id         || null, r.region_name       || null,
+         r.security_status   != null ? r.security_status : null,
+         now]
+      );
+    }
+    await charDb.run(
+      `INSERT INTO station_sync_meta (key, synced_at) VALUES ('npc_stations', ?)
+       ON CONFLICT(key) DO UPDATE SET synced_at = excluded.synced_at`, now
+    );
+    await charDb.run('COMMIT');
+    console.log(`[CharDB] Upserted ${rows.length} NPC stations.`);
+  } catch (e) {
+    await charDb.run('ROLLBACK');
+    throw e;
+  }
+}
+
+// Bulk-upsert Upwell structures.
+async function upsertUpwellStructures(rows) {
+  if (!charDb || !rows.length) return;
+  const now = Date.now();
+  await charDb.run('BEGIN');
+  try {
+    for (const r of rows) {
+      await charDb.run(
+        `INSERT INTO upwell_structures
+           (id, name, solar_system_id, solar_system_name, region_id, region_name, security_status, synced_at)
+         VALUES (?,?,?,?,?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET
+           name              = excluded.name,
+           solar_system_id   = COALESCE(excluded.solar_system_id,   solar_system_id),
+           solar_system_name = COALESCE(excluded.solar_system_name, solar_system_name),
+           region_id         = COALESCE(excluded.region_id,         region_id),
+           region_name       = COALESCE(excluded.region_name,       region_name),
+           security_status   = COALESCE(excluded.security_status,   security_status),
+           synced_at         = excluded.synced_at`,
+        [r.id, r.name,
+         r.solar_system_id   || null, r.solar_system_name || null,
+         r.region_id         || null, r.region_name       || null,
+         r.security_status   != null ? r.security_status : null,
+         now]
+      );
+    }
+    await charDb.run(
+      `INSERT INTO station_sync_meta (key, synced_at) VALUES ('upwell_structures', ?)
+       ON CONFLICT(key) DO UPDATE SET synced_at = excluded.synced_at`, now
+    );
+    await charDb.run('COMMIT');
+    console.log(`[CharDB] Upserted ${rows.length} Upwell structures.`);
+  } catch (e) {
+    await charDb.run('ROLLBACK');
+    throw e;
+  }
+}
+
+// Look up a single station/structure by ID from either table.
+// Returns { id, name, solar_system_id, solar_system_name, region_id,
+//           region_name, security_status } or null.
+async function getStationById(id) {
+  if (!charDb) return null;
+  const numId = Number(id);
+  try {
+    // NPC stations occupy 60,000,000–64,000,000
+    const table = (numId >= 60_000_000 && numId < 64_000_000)
+      ? 'npc_stations'
+      : 'upwell_structures';
+    const row = await charDb.get(
+      `SELECT * FROM ${table} WHERE id = ?`, numId
+    );
+    return row || null;
+  } catch { return null; }
+}
