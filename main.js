@@ -1123,49 +1123,58 @@ async function coreCharacterSync(characterId, characterName, progressCb) {
     report('ship', `✓ ${ship.ship_name || typeName}`);
   } catch (e) { summary.steps.ship = `error: ${e.message}`; report('ship', `✗ ${e.message}`); }
  
-  // 5. Implants & jump clones
+  // 5. Implants & jump clones (1-hour stale gate)
+  // coreCharacterSync runs on every auto-refresh (every ~20 min). Implants change
+  // very rarely so we skip the ESI call entirely if the DB data is under 1 hour old.
+  const IMPLANT_STALE_MS = 60 * 60 * 1000; // 1 hour
   try {
-    report('implants', 'Fetching implants & clones…');
-    const cloneData = await httpGet(`${ESI_BASE}/v3/characters/${characterId}/clones/?datasource=tranquility`, authHdr);
-    let activeImplants = [];
-    let implantFetchError = null;
-    try {
-      const raw = await httpGet(`${ESI_BASE}/v1/characters/${characterId}/implants/?datasource=tranquility`, authHdr);
-      activeImplants = Array.isArray(raw) ? raw : [];
-      console.log(`[CharSync] coreSync implants raw ESI for ${characterId}:`, JSON.stringify(activeImplants));
-    } catch (implantErr) {
-      implantFetchError = implantErr.message;
-      console.error(`[CharSync] ✗ coreSync implants fetch FAILED for ${characterId}: ${implantErr.message}`);
-      console.error(`[CharSync]   → Likely missing 'esi-clones.read_implants.v1' scope -- re-authenticate the character.`);
-      report('implants', `✗ implant fetch failed: ${implantErr.message} (re-authenticate to fix)`);
-    }
-    const allImplantIds  = [...new Set(activeImplants)];
-    const implantNames   = allImplantIds.length ? await resolveNames(allImplantIds) : {};
-    const slotMap        = allImplantIds.length ? await resolveImplantSlots(allImplantIds) : {};
-    const implants = allImplantIds.map(id => ({ implant_id: id, type_name: implantNames[id] || `Type ${id}`, slot: slotMap[id] ?? null }));
-    // Only wipe+replace DB rows when the fetch succeeded -- preserve stale data on error.
-    if (!implantFetchError) {
-      await charInfoDb.replaceImplants(characterId, implants);
-    }
-    summary.steps.implants = implantFetchError ? `error: ${implantFetchError}` : `${implants.length} active`;
-    if (!implantFetchError) {
-      report('implants', `✓ ${implants.length} active implants`);
-    }
-    if (cloneData && Array.isArray(cloneData.jump_clones)) {
-      const locIds       = cloneData.jump_clones.map(c => c.location_id).filter(Boolean);
-      const locMeta      = locIds.length ? await getLocator().resolveLocations(locIds, characterId) : {};
-      const jcImplantIds = [...new Set(cloneData.jump_clones.flatMap(c => c.implants || []))];
-      const jcNames      = jcImplantIds.length ? await resolveNames(jcImplantIds) : {};
-      const jumpClones   = cloneData.jump_clones.map(c => ({
-        jump_clone_id: c.jump_clone_id, location_id: c.location_id,
-        location_name: locMeta[c.location_id]?.name || `Location ${c.location_id}`,
-        name: c.name || null,
-        implants: (c.implants || []).map(id => ({ type_id: id, type_name: jcNames[id] || `Type ${id}` })),
-      }));
-      await charInfoDb.replaceJumpClones(characterId, jumpClones);
-      summary.steps.jump_clones = `${jumpClones.length} clones`;
-      report('implants', `✓ ${jumpClones.length} jump clones`);
-    }
+    const lastImplantSync = await charInfoDb.getImplantsSyncedAt(characterId).catch(() => 0);
+    const implantAge = Date.now() - lastImplantSync;
+    if (implantAge < IMPLANT_STALE_MS) {
+      summary.steps.implants = 'skipped (fresh)';
+      report('implants', `⏩ implants fresh (${Math.round(implantAge / 60000)} min old), skipping ESI call`);
+    } else {
+      report('implants', 'Fetching implants & clones…');
+      const cloneData = await httpGet(`${ESI_BASE}/v3/characters/${characterId}/clones/?datasource=tranquility`, authHdr);
+      let activeImplants = [];
+      let implantFetchError = null;
+      try {
+        const raw = await httpGet(`${ESI_BASE}/v1/characters/${characterId}/implants/?datasource=tranquility`, authHdr);
+        activeImplants = Array.isArray(raw) ? raw : [];
+        console.log(`[CharSync] coreSync implants raw ESI for ${characterId}:`, JSON.stringify(activeImplants));
+      } catch (implantErr) {
+        implantFetchError = implantErr.message;
+        console.error(`[CharSync] ✗ coreSync implants fetch FAILED for ${characterId}: ${implantErr.message}`);
+        console.error(`[CharSync]   → Likely missing 'esi-clones.read_implants.v1' scope -- re-authenticate the character.`);
+        report('implants', `✗ implant fetch failed: ${implantErr.message} (re-authenticate to fix)`);
+      }
+      const allImplantIds  = [...new Set(activeImplants)];
+      const implantNames   = allImplantIds.length ? await resolveNames(allImplantIds) : {};
+      const slotMap        = allImplantIds.length ? await resolveImplantSlots(allImplantIds) : {};
+      const implants = allImplantIds.map(id => ({ implant_id: id, type_name: implantNames[id] || `Type ${id}`, slot: slotMap[id] ?? null }));
+      if (!implantFetchError) {
+        await charInfoDb.replaceImplants(characterId, implants);
+      }
+      summary.steps.implants = implantFetchError ? `error: ${implantFetchError}` : `${implants.length} active`;
+      if (!implantFetchError) {
+        report('implants', `✓ ${implants.length} active implants`);
+      }
+      if (cloneData && Array.isArray(cloneData.jump_clones)) {
+        const locIds       = cloneData.jump_clones.map(c => c.location_id).filter(Boolean);
+        const locMeta      = locIds.length ? await getLocator().resolveLocations(locIds, characterId) : {};
+        const jcImplantIds = [...new Set(cloneData.jump_clones.flatMap(c => c.implants || []))];
+        const jcNames      = jcImplantIds.length ? await resolveNames(jcImplantIds) : {};
+        const jumpClones   = cloneData.jump_clones.map(c => ({
+          jump_clone_id: c.jump_clone_id, location_id: c.location_id,
+          location_name: locMeta[c.location_id]?.name || `Location ${c.location_id}`,
+          name: c.name || null,
+          implants: (c.implants || []).map(id => ({ type_id: id, type_name: jcNames[id] || `Type ${id}` })),
+        }));
+        await charInfoDb.replaceJumpClones(characterId, jumpClones);
+        summary.steps.jump_clones = `${jumpClones.length} clones`;
+        report('implants', `✓ ${jumpClones.length} jump clones`);
+      }
+    } // end stale-check else
   } catch (e) { summary.steps.implants = `error: ${e.message}`; report('implants', `✗ ${e.message}`); }
  
   // 6. Planetary Interaction
