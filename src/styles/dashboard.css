@@ -70,6 +70,8 @@
 
   /* ── WEALTH BAR ──────────────────────────────────────────────────────────── */
   --bar-fill-end:     #8b1a10;                 /* char wealth bar gradient end (dark crimson) */
+  --assets:         #ab7ab8;                  /* asset-type label colour         */
+  --liquidisk:      #4ec9b0;                  /* liquid ISK value colour         */
 }
 
 /* ── WELCOME BANNER — three-column layout: portrait | identity+stats | ship ── */
@@ -412,7 +414,7 @@
 }
 .dash-kpi-label     { font-size: 9px; letter-spacing: 0.2em; color: var(--text-e); font-family: var(--mono); margin-bottom: 6px; }
 .dash-kpi-value     { font-size: 18px; font-weight: 700; color: var(--accent); font-family: var(--mono); margin-bottom: 3px; }
-.dash-kpi-value.accent-green  { color: var(--success); }
+.dash-kpi-value.liquidisk  { color: var(--liquidisk); }
 .dash-kpi-value.accent-purple { color: var(--assets); }
 .dash-kpi-sub       { font-size: 10px; color: var(--text-f); font-family: var(--mono); }
 

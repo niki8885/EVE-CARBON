@@ -426,16 +426,28 @@ async function updateAssetLocation(characterId, locationId, locationData) {
 }
 
 // Returns distinct location_ids in the assets table that are still unresolved
-// (location_name is NULL or empty, or solar_system_id is NULL).
-// Used by the sync pipeline to know what still needs a locator call.
+// (location_name is NULL / empty AND the location_id is NOT another asset's item_id).
+//
+// Items inside containers or fitted to ships have location_id = the parent item's
+// item_id. The locator can never resolve those IDs (they're not stations/structures),
+// so we exclude them from the retry list — otherwise the second-pass loop hammers
+// every external source for every fitted module on every sync, all in vain.
 async function getUnresolvedAssetLocations(characterId) {
   if (!charDb) return [];
+  const p = `char_${characterId}`;
   try {
-    const rows = await charDb.all(
-      `SELECT DISTINCT location_id FROM char_${characterId}_assets
-       WHERE location_name IS NULL OR location_name = ''
-          OR solar_system_id IS NULL`
-    );
+    const rows = await charDb.all(`
+      SELECT DISTINCT a.location_id
+      FROM ${p}_assets a
+      WHERE (a.location_name IS NULL OR a.location_name = '')
+        AND a.solar_system_id IS NULL
+        -- Exclude container-child rows: their location_id points to a parent
+        -- item_id in the same table, not to a real station/structure.
+        AND NOT EXISTS (
+          SELECT 1 FROM ${p}_assets parent
+          WHERE parent.item_id = a.location_id
+        )
+    `);
     return rows.map(r => r.location_id);
   } catch (e) {
     console.error(`[CharDB] getUnresolvedAssetLocations failed for ${characterId}:`, e.message);
@@ -487,35 +499,70 @@ async function getCharacterData(characterId) {
 
 async function getCharacterAssets(characterId) {
   if (!charDb) return [];
+  const p = `char_${characterId}`;
   try {
-    // Group identical items at the same location so the UI never has to stack
-    // duplicates client-side. Quantities are summed; all other columns are taken
-    // from an arbitrary representative row (they are identical for matching pairs).
-    // volume is summed as well so total volume stays correct after grouping.
+    // ── Why this query is structured this way ────────────────────────────────
+    //
+    // ESI returns assets as a FLAT list.  Items inside containers or fitted to
+    // ships have location_id = the parent item's item_id (not a station/structure
+    // ID), so their region_name / solar_system_name are NULL in the DB.
+    //
+    // We resolve this with a LEFT JOIN back onto the same table (one level up).
+    // If a row's location_id matches another row's item_id, that parent row's
+    // location data (solar_system_name, region_name, etc.) is used instead.
+    // This covers items in containers AND items fitted to ships in a hangar.
+    //
+    // We also add location_flag to the GROUP BY so that the same item type in
+    // different slots/flags (e.g. Hangar vs CargoHold vs HiSlot0) are NOT
+    // collapsed into one row — the old query caused large quantity losses here.
+    //
+    // Singleton items (assembled ships, fitted modules) are excluded from
+    // stacking so each physical item stays distinct.
+    // ─────────────────────────────────────────────────────────────────────────
     return await charDb.all(`
       SELECT
-        MIN(item_id)           AS item_id,
-        type_id,
-        type_name,
-        location_id,
-        location_name,
-        location_flag,
-        SUM(quantity)          AS quantity,
-        SUM(COALESCE(volume, 0) * quantity) AS volume,
-        MAX(is_singleton)      AS is_singleton,
-        solar_system_id,
-        solar_system_name,
-        region_id,
-        region_name,
-        security_status,
-        owner_id,
-        owner_name,
-        MAX(synced_at)         AS synced_at
-      FROM char_${characterId}_assets
-      GROUP BY type_id, location_id
-      ORDER BY type_name ASC
+        MIN(a.item_id)                        AS item_id,
+        a.type_id,
+        a.type_name,
+        a.location_id,
+        a.location_flag,
+
+        -- Walk up one level: if this item is inside a container/ship,
+        -- borrow the parent's resolved location fields.
+        COALESCE(a.location_name,     p.location_name)     AS location_name,
+        COALESCE(a.solar_system_id,   p.solar_system_id)   AS solar_system_id,
+        COALESCE(a.solar_system_name, p.solar_system_name) AS solar_system_name,
+        COALESCE(a.region_id,         p.region_id)         AS region_id,
+        COALESCE(a.region_name,       p.region_name)       AS region_name,
+        COALESCE(a.security_status,   p.security_status)   AS security_status,
+        COALESCE(a.owner_id,          p.owner_id)          AS owner_id,
+        COALESCE(a.owner_name,        p.owner_name)        AS owner_name,
+
+        SUM(a.quantity)                                     AS quantity,
+        SUM(COALESCE(a.volume, 0) * a.quantity)             AS volume,
+        MAX(a.is_singleton)                                 AS is_singleton,
+        MAX(a.synced_at)                                    AS synced_at
+
+      FROM ${p}_assets a
+
+      -- parent row: the container or ship this item lives inside, if any
+      LEFT JOIN ${p}_assets p
+        ON p.item_id = a.location_id
+
+      -- Stack non-singleton items of the same type in the same slot/flag.
+      -- Singletons (assembled ships, fitted modules) always get their own row.
+      GROUP BY
+        a.type_id,
+        a.location_id,
+        a.location_flag,
+        a.is_singleton
+
+      ORDER BY a.type_name ASC
     `);
-  } catch (e) { return []; }
+  } catch (e) {
+    console.error(`[CharDB] getCharacterAssets failed for ${characterId}:`, e.message);
+    return [];
+  }
 }
 
 // Returns the most-recent synced_at timestamp (ms) for a character's assets,

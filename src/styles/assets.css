@@ -1,0 +1,399 @@
+/* ══════════════════════════════════════════════════════════════════
+   assets.css  —  Personal Assets page
+   Depends on: base.css (tokens), industry-blueprints.css (field-input)
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── PAGE SHELL ──────────────────────────────────────────────────────────────── */
+#page-assets {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.asset-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 14px 20px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.asset-page-header h2 {
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  color: var(--text-1);
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.asset-page-desc {
+  font-size: 10px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  letter-spacing: 0.05em;
+}
+
+.close-page-btn {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: var(--radius);
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.close-page-btn:hover { color: var(--danger); background: rgba(231,76,60,0.08); }
+
+/* ── TOOLBAR ─────────────────────────────────────────────────────────────────── */
+.asset-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+}
+
+.asset-summary {
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+  margin-right: auto;
+  white-space: nowrap;
+}
+
+/* Search input — tighter than default field-input */
+#assetSearch {
+  width: 200px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* Filter selects */
+#assetCharFilter,
+#assetRegionFilter,
+#assetCorpFilter {
+  padding: 6px 10px;
+  font-size: 12px;
+  min-width: 140px;
+}
+
+/* Reload button */
+.asset-reload-btn {
+  padding: 6px 14px;
+  font-size: 11px;
+  font-family: var(--mono);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.asset-reload-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── TABLE WRAPPER ───────────────────────────────────────────────────────────── */
+.asset-table-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+.asset-table-wrapper::-webkit-scrollbar       { width: 4px; height: 4px; }
+.asset-table-wrapper::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.asset-table-wrapper::-webkit-scrollbar-thumb:hover { background: var(--accent-40); }
+
+/* ── TABLE BASE ──────────────────────────────────────────────────────────────── */
+.asset-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  table-layout: fixed;   /* prevents columns jumping as rows load */
+}
+
+/* Column widths are set dynamically by initAssetColResize() via th inline styles. */
+
+.asset-table thead th {
+  padding: 5px 10px;
+  text-align: left;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  font-weight: 400;
+  background: var(--bg-panel);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.asset-table thead th.th-right { text-align: right; }
+
+/* ── GROUP HEADER ROW ────────────────────────────────────────────────────────── */
+.asset-group-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.asset-group-header:hover .asset-group-header-cell {
+  background: rgba(255,255,255,0.04);
+}
+
+.asset-group-header-cell {
+  padding: 7px 12px !important;
+  background: rgba(255,255,255,0.02);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Separate groups with a slightly stronger top border */
+.asset-group-header + .asset-group-header .asset-group-header-cell,
+tbody tr:first-child.asset-group-header .asset-group-header-cell {
+  border-top: 1px solid var(--border-b);
+}
+
+.asset-group-inner {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+/* Chevron */
+.asset-group-chevron {
+  font-size: 9px;
+  color: var(--text-3);
+  width: 10px;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+  font-style: normal;
+}
+
+/* Character portrait */
+.asset-group-portrait {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.1);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+/* Security badge */
+.asset-group-sec {
+  font-family: var(--mono);
+  font-size: 10px;
+  min-width: 28px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+/* Location name */
+.asset-group-location {
+  font-size: 12px;
+  color: var(--text-1);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+/* System · Region subtitle */
+.asset-group-subtitle {
+  font-size: 10px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  white-space: nowrap;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Spacer pushes count + value to the right */
+.asset-group-spacer { flex: 1; }
+
+/* Item count badge */
+.asset-group-count {
+  font-size: 10px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* Group value total */
+.asset-group-value {
+  font-size: 11px;
+  color: var(--liquidisk);
+  font-family: var(--mono);
+  white-space: nowrap;
+  min-width: 120px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ── ITEM ROWS ───────────────────────────────────────────────────────────────── */
+.asset-item-row {
+  border-bottom: 1px solid rgba(255,255,255,0.025);
+  transition: background 0.1s;
+}
+.asset-item-row:hover td { background: rgba(255,255,255,0.025); }
+
+/* Hidden state — toggled by collapse */
+.asset-row-hidden { display: none !important; }
+
+/* Type icon cell */
+.asset-item-icon-cell {
+  width: 42px;
+  padding: 3px 6px 3px 16px !important;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.asset-type-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 2px;
+  display: block;
+  object-fit: contain;
+  background: rgba(255,255,255,0.03);
+}
+
+.asset-type-icon-placeholder {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+}
+
+/* Item name cell */
+.asset-item-name-cell {
+  padding: 5px 10px !important;
+  font-size: 12px;
+  color: var(--text-1);
+  vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Quantity cell */
+.asset-item-qty-cell {
+  padding: 5px 10px !important;
+  font-size: 12px;
+  color: var(--text-2);
+  font-family: var(--mono);
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Volume cell */
+.asset-item-vol-cell {
+  padding: 5px 10px !important;
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Price cell */
+.asset-item-price-cell {
+  padding: 5px 14px 5px 10px !important;
+  font-size: 11px;
+  color: var(--text-2);
+  font-family: var(--mono);
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Highlight items with a known price */
+.asset-item-price-cell.has-price { color: var(--text-1); }
+
+/* Loading / N/A states */
+.asset-item-price-cell.price-loading { color: var(--text-3); font-style: italic; }
+.asset-item-price-cell.price-na      { color: var(--text-3); }
+
+/* ── COLUMN RESIZE HANDLES ───────────────────────────────────────────────────── */
+
+/* Table must not collapse columns during drag */
+.asset-table {
+  table-layout: fixed;
+  /* min-width kept so columns don't vanish; JS maintains individual widths */
+}
+
+/* th needs relative positioning so the handle can sit at its right edge */
+.asset-table thead th {
+  position: relative;
+  overflow: visible;      /* allow handle to overflow the cell border */
+  white-space: nowrap;
+  user-select: none;      /* prevent text selection while dragging */
+}
+
+/* The drag handle itself — invisible strip on the right edge of each th */
+.col-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;            /* straddles the border so it's easy to grab */
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 3;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.col-resize-handle:hover,
+.col-resize-handle.dragging {
+  background: var(--accent, #4ecbb0);
+  opacity: 0.55;
+}
+
+/* drag overlay (fixed div) handles cursor during resize — no col-resizing class needed */
+/* ── COLUMN REORDER — drag states ────────────────────────────────────────── */
+
+/* The th being dragged fades out so you can see the ghost */
+.asset-table thead th.col-dragging {
+  opacity: 0.4;
+}
+
+/* Highlight the column you're hovering over as a drop target */
+.asset-table thead th.col-drag-over {
+  background: rgba(78, 203, 176, 0.08);  /* accent tint */
+}
+
+/* Grab cursor on the th text area (not on the resize handle) */
+.asset-table thead th[draggable="true"] {
+  cursor: grab;
+}
+.asset-table thead th[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+/* Resize handle still wins its own cursor */
+.asset-table thead th .col-resize-handle {
+  cursor: col-resize;
+}

@@ -105,21 +105,21 @@
 
   /* ── BODY PSEUDO-ELEMENT GLOWS ───────────────────────────────────────────── */
   /* body::before — upper-left crimson radial glow (behind portrait) */
-  --glow-body-a1:   rgba(180, 25, 15, 0.28);
-  --glow-body-a2:   rgba(140, 15,  8, 0.16);
+  --glow-body-a1:   rgba(15, 67, 180, 0.61);
+  --glow-body-a2:   rgba(140, 15, 8, 0.466);
   --glow-body-a3:   rgba(100,  8,  4, 0.08);
   /* body::after — bottom-right dim secondary glow */
-  --glow-body-b1:   rgba(100, 10,  5, 0.10);
-  --glow-body-b2:   rgba( 60,  5,  2, 0.05);
+  --glow-body-b1:   rgba(59, 158, 175, 0.1);
+  --glow-body-b2:   rgba(43, 54, 207, 0.164);
 
   /* ── CONCORD AMBIENT GLOW DIVS ───────────────────────────────────────────── */
   /* .concord-glow-main — large primary glow injected by HTML */
-  --glow-main-1:    rgba(218, 33, 16, 0.61);
-  --glow-main-2:    rgba(140, 12,  6, 0.18);
-  --glow-main-3:    rgba( 90,  6,  3, 0.09);
+  --glow-main-1:    rgba(0, 43, 235, 0.61);
+  --glow-main-2:    rgba(32, 16, 122, 0.534);
+  --glow-main-3:    rgba(3, 16, 90, 0.09);
   /* .concord-glow-secondary — mid-screen secondary glow */
-  --glow-sec-1:     rgba(100,  8,  4, 0.10);
-  --glow-sec-2:     rgba( 60,  4,  2, 0.05);
+  --glow-sec-1:     rgba(4, 26, 100, 0.1);
+  --glow-sec-2:     rgba(41, 68, 126, 0.329);
 }
 
 /* ── RESET ── */
@@ -181,8 +181,8 @@ body::after {
   position: fixed;
   bottom: -200px;
   right: -200px;
-  width: 700px;
-  height: 700px;
+  width: 900px;
+  height: 900px;
   background: radial-gradient(
     ellipse at center,
     var(--glow-body-b1) 0%,
@@ -219,16 +219,16 @@ body::after {
 }
 
 .concord-glow-main {
-  top: -80px;
-  left: -40px;
-  width: 560px;
-  height: 560px;
+  top: -300px;
+  left: -300px;
+  width: 1600px;
+  height: 1600px;
   background: radial-gradient(
     ellipse at 35% 35%,
     var(--glow-main-1) 0%,
     var(--glow-main-2) 28%,
     var(--glow-main-3) 52%,
-    transparent 72%
+    transparent 35%
   );
   animation: concordGlowPulse 8s ease-in-out infinite;
 }

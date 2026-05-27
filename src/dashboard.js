@@ -743,7 +743,7 @@ function renderKPIPanel(container, accounts, totalWallet, overallValue, grandTot
   container.innerHTML = `
     <div class="dash-wealth-header">
       <div class="dash-wealth-kpi"><div class="dash-kpi-label">TOTAL NET WORTH</div><div class="dash-kpi-value">${formatISK(grandTotal)}</div><div class="dash-kpi-sub">Assets + Liquid ISK</div></div>
-      <div class="dash-wealth-kpi"><div class="dash-kpi-label">LIQUID ISK</div><div class="dash-kpi-value accent-green">${formatISK(totalWallet)}</div><div class="dash-kpi-sub">Wallet balance</div></div>
+      <div class="dash-wealth-kpi"><div class="dash-kpi-label">LIQUID ISK</div><div class="dash-kpi-value liquidisk">${formatISK(totalWallet)}</div><div class="dash-kpi-sub">Wallet balance</div></div>
       <div class="dash-wealth-kpi"><div class="dash-kpi-label">ASSET VALUE</div>
         <div class="dash-kpi-value accent-purple">${assetsLoading ? '<span style="font-size:13px;color:var(--text-3);font-family:var(--mono);">Calculating...</span>' : formatISK(overallValue)}</div>
         <div class="dash-kpi-sub">Jita sell estimate</div>

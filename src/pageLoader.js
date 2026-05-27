@@ -1,10 +1,12 @@
 // ─── pageLoader.js ────────────────────────────────────────────────────────────
-// Injects all page HTML directly into #navPagesContainer using template literals.
-// No fetch() or filesystem access needed — works natively in Electron's renderer.
+// Injects page HTML into #navPagesContainer.
+// Most pages use inline template literals in PAGE_HTML below.
+// Exception: page-assets.html is fetched at runtime and is the single
+//            source of truth for the assets page — edit that file directly.
 //
 // To add a new page:
-//   1. Add its HTML as a new template literal in PAGE_HTML below.
-//   2. That's it — no other files need changing.
+//   1. Add its HTML as a new template literal in PAGE_HTML below, OR
+//   2. Create a standalone .html file and fetch it in loadAllPages().
 
 const PAGE_HTML = {
 
@@ -147,73 +149,6 @@ const PAGE_HTML = {
         </div>
         <div id="industryTabContent" class="industry-content">
           <!-- Populated by navigateToPage('industry') → navigateIndustryTab('blueprints') -->
-        </div>
-      </div>
-    </div>`,
-
-  // ── Assets ──────────────────────────────────────────────────────────────────
-  assets: `
-    <div id="page-assets" class="nav-page"
-         style="flex-direction:column; height:100%;">
-      <div class="page-header">
-        <div>
-          <h2>Assets</h2>
-          <div class="page-description">
-            Loaded instantly from your local database — no ESI call.
-            Sync characters on the Characters page to refresh.
-          </div>
-        </div>
-        <button class="close-page-btn" onclick="closePage('assets')">✕</button>
-      </div>
-      <div class="page-content"
-           style="display:flex; flex-direction:column; gap:0; height:100%; overflow:hidden;">
-        <div class="asset-toolbar"
-             style="display:flex; flex-wrap:wrap; align-items:center; gap:10px;
-                    padding:12px 16px; border-bottom:1px solid var(--border);
-                    background:var(--bg-card); flex-shrink:0;">
-          <span id="assetSummary" class="asset-summary" style="margin-right:auto;">Loading assets…</span>
-          <input type="text" id="assetSearch" class="field-input"
-                 style="width:220px; padding:7px 10px; font-size:13px;"
-                 placeholder="Search items…" oninput="filterAssets()" />
-          <select id="assetCharFilter" class="field-input"
-                  style="width:180px; padding:7px 10px; font-size:13px;"
-                  onchange="filterAssets()">
-            <option value="">All Characters</option>
-          </select>
-          <select id="assetRegionFilter" class="field-input"
-                  style="width:160px; padding:7px 10px; font-size:13px;"
-                  onchange="filterAssets()">
-            <option value="">All Regions</option>
-          </select>
-          <button class="icon-btn" onclick="loadAssets()"
-                  title="Reload from local DB" style="padding:7px 14px; font-size:12px;">
-            ⟳ RELOAD
-          </button>
-        </div>
-        <div id="assetTableWrapper" class="asset-table-wrapper" style="flex:1; overflow-y:auto;">
-          <table id="assetTable" class="asset-table">
-            <thead>
-              <tr>
-                <th>Owner</th>
-                <th class="asset-qty-header">Qty</th>
-                <th>Item</th>
-                <th>Location</th>
-                <th>Solar System</th>
-                <th>Region</th>
-                <th>Sec</th>
-                <th>Corp</th>
-                <th>Jita 4-4 Value</th>
-                <th>Volume (m³)</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td colspan="10" class="loading-row">
-                  No assets loaded yet — sync a character on the Characters page first.
-                </td>
-              </tr>
-            </tbody>
-          </table>
         </div>
       </div>
     </div>`,
@@ -370,26 +305,57 @@ const PAGE_HTML = {
 };
 
 // ─── Inject all pages into #navPagesContainer ─────────────────────────────────
-function loadAllPages() {
+// Injects all PAGE_HTML entries first (synchronous), then fetches
+// page-assets.html and injects it after — keeping load order intact while
+// making page-assets.html the single source of truth for the assets page.
+async function loadAllPages() {
   const container = document.getElementById('navPagesContainer');
   if (!container) {
     console.error('[pageLoader] #navPagesContainer not found.');
     return;
   }
+
+  // 1. Inject all inline page templates (characters, dashboard, industry, etc.)
   for (const [, html] of Object.entries(PAGE_HTML)) {
     const tmp = document.createElement('div');
     tmp.innerHTML = html;
     while (tmp.firstChild) container.appendChild(tmp.firstChild);
   }
+
+  // 2. Fetch and inject page-assets.html — single source of truth for the assets page.
+  //    Falls back to a minimal placeholder if the file cannot be loaded so the
+  //    app still starts correctly in unexpected environments.
+  try {
+    const res  = await fetch('page-assets.html');
+    const html = await res.text();
+    const tmp  = document.createElement('div');
+    tmp.innerHTML = html;
+    while (tmp.firstChild) container.appendChild(tmp.firstChild);
+
+    // Nodes are now in the live DOM — safe to initialise column resize/reorder.
+    // The <script> in page-assets.html only defines initAssetCols(); it deliberately
+    // does NOT auto-call it, because innerHTML injection runs the script before the
+    // nodes reach the live document (getElementById returns null at that point).
+    if (typeof window.initAssetCols === 'function') {
+      window.initAssetCols();
+    }
+  } catch (e) {
+    console.error('[pageLoader] Failed to load page-assets.html:', e);
+    // Minimal fallback so #page-assets always exists in the DOM
+    const fallback = document.createElement('div');
+    fallback.id        = 'page-assets';
+    fallback.className = 'nav-page';
+    fallback.innerHTML = '<p style="padding:20px;color:var(--text-2);">Assets page failed to load.</p>';
+    container.appendChild(fallback);
+  }
 }
 
-// Expose a resolved promise so app.js can await window.__pagesReady uniformly.
-// Since injection is now synchronous, this resolves immediately.
+// Expose a promise so app.js can await window.__pagesReady uniformly.
+// loadAllPages is now async (fetches page-assets.html), so we await it here.
 window.__pagesReady = new Promise(resolve => {
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => { loadAllPages(); resolve(); }, { once: true });
+    document.addEventListener('DOMContentLoaded', () => { loadAllPages().then(resolve); }, { once: true });
   } else {
-    loadAllPages();
-    resolve();
+    loadAllPages().then(resolve);
   }
 });

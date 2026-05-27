@@ -164,7 +164,22 @@ function populateAssetFilters(assets) {
   if (prevCorp   && corpSelect?.querySelector(`option[value="${prevCorp}"]`))    corpSelect.value   = prevCorp;
 }
 
-// ── Filter assets and re-render table ────────────────────────────────────────
+// ── Grouped location tree — EVE-style ────────────────────────────────────────
+//
+// Assets are rendered as collapsible location groups, mirroring the EVE client:
+//
+//   ▶ 0.5  Jita IV - Moon 4 — 42 Items · 1,234,567 ISK
+//       Tritanium                    1000    Minerals
+//       Damage Control II              1     Damage Control
+//
+// State is kept in _assetGroupState (locationKey → expanded bool).
+// All groups start expanded. Clicking the header row toggles visibility.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Persistent expand/collapse state across filter changes
+if (typeof window._assetGroupState === 'undefined') window._assetGroupState = {};
+
+// ── Filter assets and build grouped tree ─────────────────────────────────────
 function filterAssets() {
   if (!allAssetsCache) return;
 
@@ -174,23 +189,27 @@ function filterAssets() {
   const corpVal   =  document.getElementById('assetCorpFilter')?.value   || '';
 
   filteredAssetsCache = allAssetsCache.filter(asset => {
-    if (charVal   && String(asset.characterId) !== charVal)                           return false;
+    if (charVal && String(asset.characterId) !== charVal) return false;
     if (regionVal === '__unresolved__') {
-      if (asset.region_name) return false;  // keep only unresolved rows
+      if (asset.region_name) return false;
     } else if (regionVal && (asset.region_name || '') !== regionVal) {
       return false;
     }
-    if (corpVal   && (asset.owner_name  || '') !== corpVal)                           return false;
+    if (corpVal && (asset.owner_name || '') !== corpVal) return false;
     if (searchVal) {
       const name     = (asset.name     || asset.type_name || '').toLowerCase();
       const location = (asset.location_name || '').toLowerCase();
       const corp     = (asset.owner_name    || '').toLowerCase();
-      if (!name.includes(searchVal) && !location.includes(searchVal) && !corp.includes(searchVal)) return false;
+      const region   = (asset.region_name   || '').toLowerCase();
+      const sys      = (asset.solar_system_name || '').toLowerCase();
+      if (!name.includes(searchVal) && !location.includes(searchVal) &&
+          !corp.includes(searchVal) && !region.includes(searchVal) &&
+          !sys.includes(searchVal)) return false;
     }
     return true;
   });
 
-  // Update summary count
+  // Update summary
   const assetSummary = document.getElementById('assetSummary');
   if (assetSummary) {
     const charCount = new Set(filteredAssetsCache.map(a => String(a.characterId))).size;
@@ -201,99 +220,329 @@ function filterAssets() {
       `${filteredAssetsCache.length.toLocaleString()} assets across ${charCount} character(s)${suffix}`;
   }
 
-  // Reset render position and redraw
-  assetsRenderPos = 0;
-  const tbody = document.querySelector('#assetTable tbody');
-  if (tbody) tbody.innerHTML = '';
+  renderAssetTree();
+}
 
-  if (!filteredAssetsCache.length) {
-    if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="loading-row">No assets match the current filters.</td></tr>';
+// Not used in tree mode but kept so scroll-listener wiring doesn't break
+function assetTableScrollHandler() {}
+
+// ── Build and render the full location-grouped tree ───────────────────────────
+function renderAssetTree() {
+  const tbody = document.querySelector('#assetTable tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  const source = filteredAssetsCache || allAssetsCache;
+  if (!source || !source.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="loading-row">No assets match the current filters.</td></tr>';
     return;
   }
 
-  renderNextAssetChunk();
-}
-
-function assetTableScrollHandler(e) {
-  const wrapper = e.currentTarget;
-  if (!wrapper) return;
-  if (wrapper.scrollTop + wrapper.clientHeight >= wrapper.scrollHeight - 300) {
-    renderNextAssetChunk();
+  // ── Group by location ──────────────────────────────────────────────────────
+  // Key = location_id so we never merge two different structures even if they
+  // happen to share a display name.
+  const groupMap = new Map(); // locationKey → { meta, items[] }
+  for (const asset of source) {
+    const key = String(asset.location_id || asset.location_name || 'unknown');
+    if (!groupMap.has(key)) {
+      groupMap.set(key, {
+        key,
+        locationName:    asset.location_name    || `Location ${asset.location_id}`,
+        solarSystemName: asset.solar_system_name || '',
+        regionName:      asset.region_name       || '',
+        secStatus:       asset.security_status,
+        ownerName:       asset.owner_name        || '',
+        characterId:     asset.characterId,
+        characterName:   asset.characterName,
+        items: [],
+      });
+    }
+    groupMap.get(key).items.push(asset);
   }
-}
 
-function renderNextAssetChunk() {
-  const tbody = document.querySelector('#assetTable tbody');
-  const source = filteredAssetsCache || allAssetsCache;
-  if (!tbody || !source) return;
+  // ── Sort groups: by region → solar system → location name ─────────────────
+  const groups = [...groupMap.values()].sort((a, b) => {
+    const ra = a.regionName.localeCompare(b.regionName);
+    if (ra !== 0) return ra;
+    const sa = a.solarSystemName.localeCompare(b.solarSystemName);
+    if (sa !== 0) return sa;
+    return a.locationName.localeCompare(b.locationName);
+  });
 
-  const start = assetsRenderPos;
-  const end   = Math.min(source.length, start + ASSET_CHUNK);
-  if (start >= end) return;
+  // ── Collect all type_ids that need prices ──────────────────────────────────
+  const allTypeIds = [...new Set(source.map(a => a.type_id).filter(Boolean))].filter(t => !priceCache[t]);
+  if (allTypeIds.length) {
+    // Fetch in background; cells update when the promise resolves
+    window.eveAPI.getJitaPrices(allTypeIds).then(priceMap => {
+      Object.assign(priceCache, priceMap || {});
+      _updateAssetPriceCells();
+    }).catch(() => {});
+  }
 
-  const chunk = source.slice(start, end);
-  const html  = chunk.map((asset, idx) => {
-    const ownerPortrait = `https://images.evetech.net/characters/${asset.characterId}/portrait?size=64`;
-    const location      = asset.location_name      || `ID ${asset.location_id}`;
-    const regionName    = asset.region_name         || '—';
-    const sysName       = asset.solar_system_name   || '—';
-    const corpName      = asset.owner_name          || '—';
-    const itemName      = asset.name               || `Type ${asset.type_id}`;
-    // quantity is already the grouped/stacked total from the DB query
-    const qty           = asset.quantity            || 1;
-    const totalVolume   = ((asset.volume || 0) * qty) || 0;
+  // ── Render each group ──────────────────────────────────────────────────────
+  // Use a numeric group index (gi) as the DOM link between header and item rows.
+  // This avoids CSS.escape issues with location_id strings in querySelectorAll.
+  const frag = document.createDocumentFragment();
 
-    // Colour-code security status the same way the EVE client does
-    let secDisplay = '—';
-    if (typeof asset.security_status === 'number') {
-      const sec    = asset.security_status;
-      const secStr = sec.toFixed(1);
-      let secColor = '#aaaaaa';
-      if      (sec >= 0.5)  secColor = '#4ecbb0';   // high-sec  teal
-      else if (sec >= 0.1)  secColor = '#e6c84a';   // low-sec   yellow
-      else                  secColor = '#e05252';   // null/WH   red
-      secDisplay = `<span style="color:${secColor};font-family:var(--mono);">${secStr}</span>`;
+  groups.forEach((group, gi) => {
+    const isExpanded = window._assetGroupState[group.key] !== false; // default open
+    const itemCount  = group.items.length;
+
+    // Sec status
+    let secColor = '#666';
+    let secStr   = '';
+    if (typeof group.secStatus === 'number') {
+      const sec = group.secStatus;
+      secStr  = sec.toFixed(1);
+      if      (sec >= 0.5) secColor = '#4ecbb0';
+      else if (sec >= 0.1) secColor = '#e6c84a';
+      else                 secColor = '#e05252';
     }
 
-    return `
-      <tr data-type-id="${asset.type_id || ''}" data-index="${start + idx}" data-quantity="${qty}">
-        <td class="asset-owner-cell">
-          <div class="asset-owner-wrap">
-            <img class="asset-owner-portrait" src="${ownerPortrait}" alt="${asset.characterName}"/>
-            <div class="asset-owner-name">${asset.characterName}</div>
-          </div>
-        </td>
-        <td class="asset-qty">${qty.toLocaleString()}</td>
-        <td>${itemName}</td>
-        <td>${location}</td>
-        <td class="asset-constellation">${sysName}</td>
-        <td class="asset-region">${regionName}</td>
-        <td class="asset-sec">${secDisplay}</td>
-        <td class="asset-corp">${corpName}</td>
-        <td class="asset-price" data-type-id="${asset.type_id || ''}">Loading...</td>
-        <td>${totalVolume.toFixed(2)}</td>
-      </tr>`;
-  }).join('');
+    // System · Region subtitle
+    const subtitle = [group.solarSystemName, group.regionName].filter(Boolean).join(' · ');
 
-  tbody.insertAdjacentHTML('beforeend', html);
-  assetsRenderPos = end;
+    // Character portrait
+    const portrait = `https://images.evetech.net/characters/${group.characterId}/portrait?size=32`;
 
-  // Fetch prices for new types
-  const typesNeeded = [...new Set(chunk.map(a => a.type_id).filter(Boolean))].filter(t => !priceCache[t]);
-  if (typesNeeded.length) {
-    window.eveAPI.getJitaPrices(typesNeeded).then(priceMap => {
-      Object.assign(priceCache, priceMap || {});
-      typesNeeded.forEach(typeId => {
-        const entry = priceMap[typeId] || {};
-        const price = entry.sell || entry.buy || 0;
-        document.querySelectorAll(`.asset-price[data-type-id="${typeId}"]`).forEach(td => {
-          const row = td.closest('tr');
-          const qty = Number(row?.dataset.quantity) || 1;
-          td.textContent = price ? `${Math.round(price * qty).toLocaleString('en-US')} ISK` : 'N/A';
-        });
-      });
-    }).catch(() => { /* leave Loading... */ });
+    // ── Group header row ───────────────────────────────────────────────────
+    const headerTr = document.createElement('tr');
+    headerTr.className = 'asset-group-header';
+    headerTr.dataset.gi       = gi;
+    headerTr.dataset.expanded = isExpanded ? '1' : '0';
+    headerTr.innerHTML = `
+      <td colspan="5" class="asset-group-header-cell">
+        <div class="asset-group-inner">
+          <span class="asset-group-chevron">${isExpanded ? '▼' : '▶'}</span>
+          <img class="asset-group-portrait"
+               src="${portrait}"
+               alt="${escHtml(group.characterName)}"
+               title="${escHtml(group.characterName)}" />
+          ${secStr ? `<span class="asset-group-sec" style="color:${secColor}">${secStr}</span>` : ''}
+          <span class="asset-group-location">${escHtml(group.locationName)}</span>
+          ${subtitle ? `<span class="asset-group-subtitle">· ${escHtml(subtitle)}</span>` : ''}
+          <span class="asset-group-spacer"></span>
+          <span class="asset-group-count">${itemCount.toLocaleString()} item${itemCount !== 1 ? 's' : ''}</span>
+          <span class="asset-group-value" data-gi="${gi}">—</span>
+        </div>
+      </td>`;
+    headerTr.addEventListener('click', _toggleAssetGroup);
+    frag.appendChild(headerTr);
+
+    // ── Item rows ──────────────────────────────────────────────────────────
+    const sorted = [...group.items].sort((a, b) =>
+      (a.name || a.type_name || '').localeCompare(b.name || b.type_name || ''));
+
+    for (const asset of sorted) {
+      const itemTr = document.createElement('tr');
+      itemTr.className        = 'asset-item-row' + (isExpanded ? '' : ' asset-row-hidden');
+      itemTr.dataset.gi       = gi;
+      itemTr.dataset.typeId   = asset.type_id  || '';
+      itemTr.dataset.quantity = asset.quantity || 1;
+
+      const qty      = asset.quantity || 1;
+      const itemName = asset.name || asset.type_name || `Type ${asset.type_id}`;
+      const vol      = asset.volume != null ? Number(asset.volume).toFixed(2) : '—';
+
+      const iconHtml = asset.type_id
+        ? `<img class="asset-type-icon"
+                src="https://images.evetech.net/types/${asset.type_id}/icon?size=32"
+                alt="" loading="lazy" />`
+        : `<span class="asset-type-icon-placeholder"></span>`;
+
+      const cachedEntry = priceCache[asset.type_id] || {};
+      const cachedPrice = cachedEntry.sell || cachedEntry.buy || 0;
+      const priceText   = cachedPrice
+        ? `${Math.round(cachedPrice * qty).toLocaleString('en-US')} ISK`
+        : 'Loading…';
+      const priceClass  = cachedPrice ? 'has-price' : 'price-loading';
+
+      itemTr.innerHTML = `
+        <td class="asset-item-icon-cell">${iconHtml}</td>
+        <td class="asset-item-name-cell">${escHtml(itemName)}</td>
+        <td class="asset-item-qty-cell">${qty > 1 ? qty.toLocaleString() : ''}</td>
+        <td class="asset-item-vol-cell">${vol}</td>
+        <td class="asset-item-price-cell ${priceClass}"
+            data-type-id="${asset.type_id || ''}"
+            data-quantity="${qty}">${priceText}</td>`;
+
+      frag.appendChild(itemTr);
+    }
+  });
+
+  tbody.appendChild(frag);
+  _updateAssetPriceCells();
+  initAssetColResize();
+}
+
+// ── Toggle a location group open/closed ───────────────────────────────────────
+function _toggleAssetGroup(e) {
+  const headerTr  = e.currentTarget;
+  const gi        = headerTr.dataset.gi;
+  const expanding = headerTr.dataset.expanded !== '1';
+
+  headerTr.dataset.expanded = expanding ? '1' : '0';
+  const chev = headerTr.querySelector('.asset-group-chevron');
+  if (chev) chev.textContent = expanding ? '▼' : '▶';
+
+  // Persist state by location key stored as a sibling data attr
+  const key = headerTr.dataset.groupKey || gi;
+  window._assetGroupState[key] = expanding;
+
+  // Toggle all item rows that share the same group index
+  const tbody = headerTr.closest('tbody');
+  if (!tbody) return;
+  tbody.querySelectorAll(`.asset-item-row[data-gi="${gi}"]`).forEach(row => {
+    row.classList.toggle('asset-row-hidden', !expanding);
+  });
+}
+
+// ── Update price cells and group value totals ─────────────────────────────────
+function _updateAssetPriceCells() {
+  const tbody = document.querySelector('#assetTable tbody');
+  if (!tbody) return;
+
+  // Update individual item price cells
+  tbody.querySelectorAll('td.asset-item-price-cell[data-type-id]').forEach(td => {
+    const typeId = Number(td.dataset.typeId);
+    const qty    = Number(td.dataset.quantity) || 1;
+    if (!typeId || !priceCache[typeId]) return;
+    const entry = priceCache[typeId];
+    const price = entry.sell || entry.buy || 0;
+    if (price) {
+      td.textContent = `${Math.round(price * qty).toLocaleString('en-US')} ISK`;
+      td.classList.remove('price-loading', 'price-na');
+      td.classList.add('has-price');
+    } else if (td.textContent === 'Loading…') {
+      td.textContent = 'N/A';
+      td.classList.remove('price-loading');
+      td.classList.add('price-na');
+    }
+  });
+
+  // Roll up group totals keyed by gi (numeric group index)
+  const groupTotals = {};
+  tbody.querySelectorAll('tr.asset-item-row').forEach(row => {
+    const gi     = row.dataset.gi;
+    const typeId = Number(row.dataset.typeId);
+    const qty    = Number(row.dataset.quantity) || 1;
+    if (!gi || !typeId || !priceCache[typeId]) return;
+    const price = priceCache[typeId].sell || priceCache[typeId].buy || 0;
+    groupTotals[gi] = (groupTotals[gi] || 0) + price * qty;
+  });
+
+  // Write totals into header value spans (also keyed by gi)
+  tbody.querySelectorAll('.asset-group-value[data-gi]').forEach(el => {
+    const gi    = el.dataset.gi;
+    const total = groupTotals[gi] || 0;
+    el.textContent = total > 0
+      ? `${Math.round(total).toLocaleString('en-US')} ISK`
+      : '—';
+  });
+}
+
+// Keep this as a no-op — tree renders all at once, scroll is no longer needed
+function renderNextAssetChunk() {}
+
+// ── Draggable column resizing ─────────────────────────────────────────────────
+//
+// Injects a 6 px drag handle at the right edge of every <th> in #assetTable.
+// Column widths are persisted to localStorage so they survive page reloads.
+// Call once after the table is first rendered; safe to call again (idempotent).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ASSET_COL_STORAGE_KEY = 'assetColWidths';
+
+/** Default column widths in pixels (order matches the 5 <th> elements).
+ *  Icon | Item | Qty | Volume | Jita 4-4 Value */
+const ASSET_COL_DEFAULTS = [40, 320, 80, 110, 150];
+const ASSET_COL_MIN      = 32;   // px — minimum draggable width
+
+function _assetSaveColWidths(widths) {
+  try { localStorage.setItem(ASSET_COL_STORAGE_KEY, JSON.stringify(widths)); } catch (e) {}
+}
+
+function _assetLoadColWidths() {
+  try {
+    const raw = localStorage.getItem(ASSET_COL_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      // Discard stale widths saved from the old 10-column layout
+      if (Array.isArray(parsed) && parsed.length === ASSET_COL_DEFAULTS.length) return parsed;
+      localStorage.removeItem(ASSET_COL_STORAGE_KEY);
+    }
+  } catch (e) {}
+  return [...ASSET_COL_DEFAULTS];
+}
+
+function _assetApplyColWidths(ths, widths) {
+  ths.forEach((th, i) => {
+    th.style.width    = widths[i] + 'px';
+    th.style.minWidth = widths[i] + 'px';
+  });
+}
+
+function initAssetColResize() {
+  const table = document.getElementById('assetTable');
+  if (!table) return;
+
+  const ths = Array.from(table.querySelectorAll('thead th'));
+  if (!ths.length) return;
+
+  // Remove handles from any previous call (idempotent)
+  table.querySelectorAll('.col-resize-handle').forEach(h => h.remove());
+
+  // Apply saved (or default) widths to ths
+  const widths = _assetLoadColWidths();
+  _assetApplyColWidths(ths, widths);
+
+  // Full-screen drag overlay — sits on top of everything during a drag so
+  // mousemove/mouseup are never swallowed by iframes, scrollers, or Electron's
+  // webview hit-testing. Removed the moment the mouse is released.
+  function _makeDragOverlay() {
+    const ov = document.createElement('div');
+    ov.style.cssText = [
+      'position:fixed', 'inset:0', 'z-index:99999',
+      'cursor:col-resize', 'user-select:none',
+    ].join(';');
+    document.body.appendChild(ov);
+    return ov;
   }
+
+  ths.forEach((th, colIdx) => {
+    const handle = document.createElement('span');
+    handle.className = 'col-resize-handle';
+    th.appendChild(handle);
+
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const startX  = e.clientX;
+      const startW  = th.getBoundingClientRect().width; // reliable after layout
+      const overlay = _makeDragOverlay();
+      handle.classList.add('dragging');
+
+      const onMove = (ev) => {
+        const newW = Math.max(ASSET_COL_MIN, startW + (ev.clientX - startX));
+        widths[colIdx]    = Math.round(newW);
+        th.style.width    = newW + 'px';
+        th.style.minWidth = newW + 'px';
+      };
+
+      const onUp = () => {
+        overlay.remove();
+        handle.classList.remove('dragging');
+        document.removeEventListener('mousemove', onMove, true);
+        document.removeEventListener('mouseup',   onUp,   true);
+        _assetSaveColWidths(widths);
+      };
+
+      // Use capture so events fire even if a child calls stopPropagation
+      document.addEventListener('mousemove', onMove, true);
+      document.addEventListener('mouseup',   onUp,   true);
+    });
+  });
 }
 
 // Pre-fetch assets from local DB in the background at startup (non-blocking).

@@ -783,10 +783,19 @@ async function fullCharacterSync(characterId, characterName, progressCb) {
       if (!data || data.length < 1000) break;
       page++;
     }
-    const typeIds     = [...new Set(allAssets.map(a => a.type_id).filter(Boolean))];
-    const locationIds = [...new Set(allAssets.map(a => a.location_id).filter(Boolean))];
-    const nameMap     = await resolveNames(typeIds);
-    const locationMeta = await getLocator().resolveLocations(locationIds, characterId);
+    const typeIds = [...new Set(allAssets.map(a => a.type_id).filter(Boolean))];
+    const nameMap = await resolveNames(typeIds);
+
+    // Only resolve IDs that are real stations/structures — not container item_ids.
+    // Nested items (inside crates, fitted to ships) have location_id = parent item_id.
+    // Sending those to the locator always fails; the getCharacterAssets() JOIN handles them.
+    const allItemIds      = new Set(allAssets.map(a => a.item_id));
+    const rootLocationIds = [...new Set(
+      allAssets
+        .map(a => a.location_id)
+        .filter(id => id && !allItemIds.has(id))
+    )];
+    const locationMeta = await getLocator().resolveLocations(rootLocationIds, characterId);
 
     const assets = allAssets.map(asset => {
       const loc = locationMeta[asset.location_id] || {};
@@ -1465,12 +1474,23 @@ async function syncAssetsInternal(characterId) {
   }
 
   const typeIds     = [...new Set(allAssets.map(a => a.type_id).filter(Boolean))];
-  const locationIds = [...new Set(allAssets.map(a => a.location_id).filter(Boolean))];
   const nameMap     = await resolveNames(typeIds);
+
+  // Build a Set of all item_ids so we can detect container-child rows.
+  // Items whose location_id matches another item's item_id are nested inside
+  // a container or fitted to a ship — their location is NOT a station/structure
+  // and must NOT be sent to the locator (it will always fail for those IDs).
+  // The getCharacterAssets() JOIN walk handles resolving their display location.
+  const allItemIds     = new Set(allAssets.map(a => a.item_id));
+  const rootLocationIds = [...new Set(
+    allAssets
+      .map(a => a.location_id)
+      .filter(id => id && !allItemIds.has(id))   // keep only real station/structure IDs
+  )];
 
   // Resolve all location metadata via the shared locator module.
   // Handles NPC stations, player structures (ESI auth -> Hammertime -> zKillboard -> adam4eve).
-  const locationMeta = await getLocator().resolveLocations(locationIds, characterId);
+  const locationMeta = await getLocator().resolveLocations(rootLocationIds, characterId);
 
   // locationMeta[id] has the full locator shape:
   //   { name, solar_system_id, solar_system_name, constellation_id, constellation_name,
