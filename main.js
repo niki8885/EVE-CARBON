@@ -4,9 +4,14 @@ const https = require('https');
 const http = require('http');
 const crypto = require('crypto');
 const fs = require('fs');
-const createLocator      = require('./src/locator');
-const charInfoDb         = require('./src/character_info_db');
-const jabberDataDb       = require('./src/jabber_data_db');
+const createLocator           = require('./src/locator');
+const charInfoDb              = require('./src/character_info_db');
+const jabberDataDb            = require('./src/jabber_data_db');
+const { registerAccountHandlers }   = require('./src/ipc/accounts_ipc');
+const { registerCharacterHandlers } = require('./src/ipc/character_ipc');
+const { registerEsiHandlers }       = require('./src/ipc/esi_ipc');
+const { registerBlueprintHandlers } = require('./src/ipc/blueprint_ipc');
+const { registerAssetHandlers }     = require('./src/ipc/assets_ipc');
 
 // Load environment variables from .env file in both development and production.
 const envPath = app.isPackaged
@@ -193,6 +198,53 @@ app.whenReady().then(async () => {
     console.error('[jabberDataDb] init failed, continuing:', e.message);
   }
   createWindow();
+  registerAccountHandlers({
+    loadDB,
+    saveDB,
+    charInfoDb,
+    httpPost,
+    fullCharacterSync,
+    callbackServerState,
+  });
+  registerCharacterHandlers({
+    charInfoDb,
+    loadDB,
+    getValidToken,
+    httpGet,
+    resolveNames,
+    readCache,
+    writeCache,
+  });
+  registerEsiHandlers({
+    httpGet,
+    httpPost,
+    resolveNames,
+    readCache,
+    writeCache,
+    getLocator,
+    bpCache,
+    getSdeDb: () => sdeDb,
+  });
+  registerBlueprintHandlers({
+    getValidToken,
+    httpGet,
+    resolveNames,
+    loadDB,
+    saveDB,
+    charInfoDb,
+  });
+  registerAssetHandlers({
+    getValidToken,
+    httpGet,
+    resolveNames,
+    getLocator,
+    loadDB,
+    saveDB,
+    readCache,
+    writeCache,
+    charInfoDb,
+    coreCharacterSync,
+  });
 });
  
  
@@ -264,127 +316,14 @@ function httpPost(url, body, headers = {}, formEncoded = false) {
   });
 }
  
-// ─── PKCE helpers ─────────────────────────────────────────────────────────────
-function generateCodeVerifier() {
-  return crypto.randomBytes(32).toString('base64url');
-}
-function generateCodeChallenge(verifier) {
-  return crypto.createHash('sha256').update(verifier).digest('base64url');
-}
- 
-// ─── SSO state store (per login attempt) ──────────────────────────────────────
-const pendingAuth = {}; // state -> { codeVerifier, mainWindow }
- 
 // ─── Caches ───────────────────────────────────────────────────────────────────
 const nameCache = {};
 const bpCache   = {};
  
 // ─── Local callback HTTP server ───────────────────────────────────────────────
-let callbackServer = null;
- 
-function startCallbackServer() {
-  if (callbackServer) return;
-  callbackServer = http.createServer(async (req, res) => {
-    const url = new URL(req.url, `http://localhost:${CALLBACK_PORT}`);
-    if (url.pathname !== '/auth/callback' && url.pathname !== '/auth/callback/') { res.end(); return; }
- 
-    const code  = url.searchParams.get('code');
-    const state = url.searchParams.get('state');
- 
-    if (!code || !state || !pendingAuth[state]) {
-      res.writeHead(400);
-      res.end('<html><body style="background:#070b14;color:#e24b4a;font-family:monospace;padding:2rem;"><h2>❌ Auth Error</h2><p>Invalid callback. Close this window.</p></body></html>');
-      return;
-    }
- 
-    const { codeVerifier, win } = pendingAuth[state];
-    delete pendingAuth[state];
- 
-    try {
-      // Exchange code for tokens (PKCE — no secret key needed)
-      const formBody = new URLSearchParams({
-        grant_type:    'authorization_code',
-        code,
-        client_id:     CLIENT_ID,
-        redirect_uri:  CALLBACK_URL,
-        code_verifier: codeVerifier,
-      }).toString();
- 
-      const tokenData = await httpPost(SSO_TOKEN_URL, formBody, {}, true);
- 
-      // Verify the token to get character info
-      const charInfo = await httpGet(SSO_VERIFY_URL, {
-        'Authorization': `Bearer ${tokenData.access_token}`
-      });
- 
-      const characterId   = charInfo.CharacterID;
-      const characterName = charInfo.CharacterName;
- 
-      // Save to DB
-      const db = loadDB();
-      db.accounts[characterId] = {
-        characterId,
-        characterName,
-        accessToken:  tokenData.access_token,
-        refreshToken: tokenData.refresh_token,
-        expiresAt:    Date.now() + (tokenData.expires_in * 1000),
-        addedAt:      Date.now(),
-      };
-      saveDB(db);
- 
-      // Notify renderer
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('account-added', { characterId, characterName });
-      }
- 
-      // ── Auto full-sync on first login ────────────────────────────────────
-      // Run in background — don't block the HTTP response
-      setImmediate(async () => {
-        try {
-          console.log(`[CharSync] Auto-syncing all data for ${characterName} (${characterId})…`);
-          if (win && !win.isDestroyed()) {
-            win.webContents.send('char-sync-progress', { characterId, characterName, step: 'start' });
-          }
-          const summary = await fullCharacterSync(characterId, characterName, (step, detail) => {
-            console.log(`[CharSync] ${characterName} — ${step}: ${detail}`);
-            if (win && !win.isDestroyed()) {
-              win.webContents.send('char-sync-progress', { characterId, characterName, step, detail });
-            }
-          });
-          console.log(`[CharSync] ✓ ${characterName} sync complete:`, summary);
-          if (win && !win.isDestroyed()) {
-            win.webContents.send('char-sync-progress', { characterId, characterName, step: 'done', summary });
-          }
-        } catch (e) {
-          console.error(`[CharSync] Auto-sync failed for ${characterName}:`, e.message);
-          if (win && !win.isDestroyed()) {
-            win.webContents.send('char-sync-progress', { characterId, characterName, step: 'error', detail: e.message });
-          }
-        }
-      });
- 
-      // Add the Content-Type header so the browser knows how to render the hexagon
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(`<html><body style="background:#070b14;color:#4ada8a;font-family:monospace;padding:2rem;text-align:center;">
-        <div style="margin-top:3rem;">
-          <div style="font-size:3rem;margin-bottom:1rem;">⬡</div>
-          <h2 style="letter-spacing:0.1em;">CHARACTER AUTHENTICATED</h2>
-          <p style="color:#6888a8;margin-top:1rem;">${characterName} has been added to the calculator.</p>
-          <p style="color:#3a5070;margin-top:2rem;font-size:11px;">You can close this window.</p>
-        </div>
-      </body></html>`);
- 
-    } catch (e) {
-      res.writeHead(500);
-      res.end(`<html><body style="background:#070b14;color:#e24b4a;font-family:monospace;padding:2rem;"><h2>Auth Failed</h2><p>${e.message}</p></body></html>`);
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('auth-error', e.message);
-      }
-    }
-  });
- 
-  callbackServer.listen(CALLBACK_PORT, '127.0.0.1');
-}
+// Shared state object passed into registerAccountHandlers so main.js can still
+// close the server on quit without knowing its internals.
+const callbackServerState = { server: null, start: null };
  
 // ─── Token refresh ────────────────────────────────────────────────────────────
 async function getValidToken(characterId) {
@@ -499,154 +438,7 @@ function createWindow() {
 // ─── IPC: Config ──────────────────────────────────────────────────────────────
 // Config is now hardcoded — no client-side config needed
  
-// ─── IPC: Accounts ────────────────────────────────────────────────────────────
-ipcMain.handle('get-accounts', () => {
-  const db = loadDB();
-  return Object.values(db.accounts).map(a => ({
-    characterId:   a.characterId,
-    characterName: a.characterName,
-    addedAt:       a.addedAt,
-  }));
-});
- 
-ipcMain.handle('get-character-jobs', async (_, characterId) => {
-  // Completed jobs never change — cache aggressively to avoid hammering ESI.
-  // This is the single biggest source of 429s in the dashboard refresh loop.
-  const cacheKey = `jobs_completed_${characterId}`;
-  const cached = readCache(cacheKey);
-  if (cached) return cached;
- 
-  try {
-    const token = await getValidToken(characterId);
-    const url = `${ESI_BASE}/latest/characters/${characterId}/industry/jobs/?datasource=tranquility&status=completed`;
-    const jobs = await httpGet(url, { Authorization: `Bearer ${token}` });
-    if (!Array.isArray(jobs)) return [];
-    const systemIds = [...new Set(jobs.filter(j => j.solar_system_id).map(j => j.solar_system_id))];
-    const nameMap = systemIds.length ? await resolveNames(systemIds) : {};
-    const result = jobs.map(job => ({
-      ...job,
-      solar_system_name: nameMap[job.solar_system_id] || `System ${job.solar_system_id || 'Unknown'}`,
-    }));
-    writeCache(cacheKey, result, 1); // 24 hours — completed jobs never change
-    writeCache(`${cacheKey}_stale`, result, 30); // 30-day stale fallback for 429 situations
-    return result;
-  } catch (e) {
-    if (e.isRateLimit) {
-      // On a 429, return whatever stale cache we have rather than an empty array,
-      // so the dashboard doesn't blank out the jobs table.
-      const stale = readCache(`${cacheKey}_stale`);
-      if (stale) return stale;
-    }
-    console.warn('Failed to load character jobs:', e.message || e);
-    return [];
-  }
-});
- 
-ipcMain.handle('remove-account', async (_, characterId) => {
-  const db = loadDB();
-  delete db.accounts[characterId];
-  delete db.blueprints[characterId];
-  delete db.assets[characterId];
-  saveDB(db);
-  // Also remove all tables for this character from character_information.db
-  try { await charInfoDb.removeCharacterData(characterId); } catch (e) { /* ignore */ }
-  return true;
-});
- 
-// ─── IPC: SSO Login ───────────────────────────────────────────────────────────
-ipcMain.handle('start-sso-login', (event) => {
-  const cfg = loadConfig();
-  // Client ID is hardcoded — always available
- 
-  startCallbackServer();
- 
-  const codeVerifier   = generateCodeVerifier();
-  const codeChallenge  = generateCodeChallenge(codeVerifier);
-  const state          = crypto.randomBytes(16).toString('hex');
- 
-  const win = BrowserWindow.fromWebContents(event.sender);
-  pendingAuth[state] = { codeVerifier, win };
- 
-  const params = new URLSearchParams({
-    response_type:         'code',
-    redirect_uri:          CALLBACK_URL,
-    client_id:             CLIENT_ID,
-    scope:                 SCOPES,
-    code_challenge:        codeChallenge,
-    code_challenge_method: 'S256',
-    state,
-  });
- 
-  const authUrl = `${SSO_AUTH_URL}?${params.toString()}`;
-  shell.openExternal(authUrl);
-  return { ok: true };
-});
- 
-// ─── IPC: Fetch & sync blueprints for a character ─────────────────────────────
-ipcMain.handle('sync-blueprints', async (_, characterId) => {
-  const token = await getValidToken(characterId);
-  const db    = loadDB();
- 
-  // Fetch character blueprints
-  let allBPs = [];
-  let page = 1;
-  while (true) {
-    const data = await httpGet(
-      `${ESI_BASE}/v3/characters/${characterId}/blueprints/?page=${page}&datasource=tranquility`,
-      { Authorization: `Bearer ${token}` }
-    );
-    allBPs = allBPs.concat(data);
-    if (data.length < 1000) break;
-    page++;
-  }
- 
-  // Resolve type names for all BPs
-  const typeIds = [...new Set(allBPs.map(b => b.type_id))];
-  const nameMap = await resolveNames(typeIds);
- 
-  const blueprints = allBPs.map(bp => ({
-    item_id:       bp.item_id,
-    type_id:       bp.type_id,
-    name:          nameMap[bp.type_id] || `Type ${bp.type_id}`,
-    location_id:   bp.location_id,
-    location_flag: bp.location_flag,
-    quantity:      bp.quantity,      // -1 = BPO, -2 = BPC
-    runs:          bp.runs,          // -1 = BPO, >0 = BPC runs remaining
-    me:            bp.material_efficiency,
-    te:            bp.time_efficiency,
-    isBPC:         bp.quantity === -2,
-  }));
- 
-  db.blueprints[characterId] = {
-    updatedAt: Date.now(),
-    items: blueprints,
-  };
-  saveDB(db);
- 
-  return { count: blueprints.length, blueprints };
-});
- 
-// ─── IPC: Get saved blueprints ────────────────────────────────────────────────
-ipcMain.handle('get-blueprints', (_, characterId) => {
-  const db = loadDB();
-  return db.blueprints[characterId] || null;
-});
- 
-ipcMain.handle('get-all-blueprints', () => {
-  const db = loadDB();
-  const all = [];
-  for (const [charId, data] of Object.entries(db.blueprints)) {
-    const account = db.accounts[charId];
-    if (data && data.items) {
-      data.items.forEach(bp => all.push({
-        ...bp,
-        characterId: charId,
-        characterName: account?.characterName || 'Unknown',
-      }));
-    }
-  }
-  return all;
-});
+// ─── Blueprint IPC handlers → src/ipc/blueprint_ipc.js ───────────────────────
  
 // ─── Implant slot resolver ────────────────────────────────────────────────────
 // ESI /v1/characters/{id}/implants/ returns type IDs in no guaranteed order.
@@ -1327,444 +1119,10 @@ async function coreCharacterSync(characterId, characterName, progressCb) {
   return summary;
 }
  
-// ─── IPC: Core-only auto-sync (20-min cadence, no assets) ─────────────────────
-ipcMain.handle('sync-character-core', async (event, characterId) => {
-  const db = loadDB();
-  const account = db.accounts[characterId];
-  if (!account) throw new Error('Account not found');
-  const characterName = account.characterName;
-  const win = BrowserWindow.fromWebContents(event.sender);
+// ─── Asset IPC handlers → src/ipc/assets_ipc.js ──────────────────────────────
  
-  return coreCharacterSync(characterId, characterName, (step, detail) => {
-    console.log(`[CoreSync] ${characterName} — ${step}: ${detail}`);
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('char-sync-progress', { characterId, characterName, step, detail });
-    }
-  });
-});
- 
-// ─── IPC: Asset-only sync — skips if synced within the last 12 hours ──────────
-const ASSET_STALE_MS = 12 * 60 * 60 * 1000; // 12 hours
- 
-ipcMain.handle('sync-character-assets-if-stale', async (event, characterId) => {
-  const db = loadDB();
-  const account = db.accounts[characterId];
-  if (!account) throw new Error('Account not found');
-  const characterName = account.characterName;
-  const win = BrowserWindow.fromWebContents(event.sender);
- 
-  // Check how old the asset data is
-  const lastAssetSync = await charInfoDb.getAssetSyncedAt(characterId).catch(() => 0);
-  const ageMs = Date.now() - (lastAssetSync || 0);
- 
-  if (lastAssetSync && ageMs < ASSET_STALE_MS) {
-    const hoursOld = (ageMs / 3_600_000).toFixed(1);
-    console.log(`[AssetSync] ${characterName}: assets fresh (${hoursOld}h old) — skipping.`);
-    return { skipped: true, characterId, characterName, ageMs };
-  }
- 
-  console.log(`[AssetSync] ${characterName}: assets stale — syncing…`);
-  if (win && !win.isDestroyed()) {
-    win.webContents.send('char-sync-progress', { characterId, characterName, step: 'assets', detail: 'Fetching assets (paginated)…' });
-  }
- 
-  try {
-    const r = await syncAssetsInternal(characterId);
-    console.log(`[AssetSync] ${characterName}: ✓ ${r.count} assets stored.`);
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('char-sync-progress', { characterId, characterName, step: 'assets', detail: `✓ ${r.count} assets stored` });
-    }
-    return { skipped: false, characterId, characterName, count: r.count };
-  } catch (e) {
-    console.warn(`[AssetSync] ${characterName}: ✗ ${e.message}`);
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('char-sync-progress', { characterId, characterName, step: 'assets', detail: `✗ ${e.message}` });
-    }
-    throw e;
-  }
-});
- 
-// ─── IPC: Get stored character info from CharDB ───────────────────────────────
-ipcMain.handle('get-character-info-db', async (_, characterId) => {
-  return charInfoDb.getCharacterData(characterId);
-});
- 
-ipcMain.handle('get-character-assets-db', async (_, characterId) => {
-  return charInfoDb.getCharacterAssets(characterId);
-});
- 
-ipcMain.handle('get-character-blueprints-db', async (_, characterId) => {
-  return charInfoDb.getCharacterBlueprints(characterId);
-});
- 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ADDITIONS FOR main.js
-// Insert both blocks below immediately AFTER the existing:
-//   ipcMain.handle('get-character-blueprints-db', ...)   (around line 1162)
-//
-// These two handlers power the new blueprints.js "My Blueprints" tab.
-// ═══════════════════════════════════════════════════════════════════════════════
- 
-// ─── IPC: Get ALL blueprints from SQLite (all synced characters) ──────────────
-// Reads char_{id}_blueprints tables directly from character_information.db.
-// Returns a flat array of blueprint rows, each augmented with characterId and
-// characterName from the accounts store (blueprints.json).
-//
-// Called by: loadBlueprintLibrary() in blueprints.js
-//            via window.eveAPI.getAllBlueprintsFromDb()
- 
-ipcMain.handle('get-all-blueprints-from-db', async () => {
-  const db       = loadDB();
-  const accounts = db.accounts || {};
-  const all      = [];
- 
-  for (const [charIdStr, account] of Object.entries(accounts)) {
-    const characterId   = Number(charIdStr);
-    const characterName = account.characterName || 'Unknown';
- 
-    try {
-      const rows = await charInfoDb.getCharacterBlueprints(characterId);
-      if (Array.isArray(rows)) {
-        rows.forEach(row => {
-          all.push({
-            ...row,
-            characterId,
-            characterName,
-          });
-        });
-      }
-    } catch (e) {
-      console.warn(`[get-all-blueprints-from-db] Skipped character ${characterId}: ${e.message}`);
-    }
-  }
- 
-  return all;
-});
- 
-// ─── IPC: SDE blueprint materials with ME bonus applied ──────────────────────
-// Queries the local SDE sqlite (sde.sql) for the manufacturing activity of
-// blueprintTypeId, then applies the ME reduction formula:
-//
-//   adjustedQty = max(1, ceil(baseQty × (1 − me/100)))
-//
-// Also resolves the product type name and quantity from industryActivityProducts.
-//
-// Returns:
-//   {
-//     materials:    [{ typeId, name, baseQty, adjustedQty, isComponent }],
-//     productTypeId: number | null,
-//     productName:   string | null,
-//     productQty:    number,
-//   }
-//
-// Called by: openBlueprintDetail() in blueprints.js
-//            via window.eveAPI.sdeBlueprintMaterials(typeId, me)
- 
-ipcMain.handle('sde-blueprint-materials', async (_, blueprintTypeId, me = 0) => {
-  if (!sdeDb) return null;
- 
-  const MANUFACTURING = 1;  // activityID for manufacturing in SDE
- 
-  // ── 1. Fetch raw materials from industryActivityMaterials ──────────────────
-  // The SDE table is: industryActivityMaterials(typeID, activityID, materialTypeID, quantity)
-  let matRows = [];
-  try {
-    matRows = await sdeDb.all(
-      `SELECT materialTypeID, quantity
-         FROM industryActivityMaterials
-        WHERE typeID     = ?
-          AND activityID = ?`,
-      blueprintTypeId, MANUFACTURING
-    );
-  } catch (e) {
-    console.warn('[sde-blueprint-materials] industryActivityMaterials query failed:', e.message);
-    return null;
-  }
- 
-  if (!matRows.length) return null;
- 
-  // ── 2. Resolve material type names ────────────────────────────────────────
-  const matTypeIds  = matRows.map(r => r.materialTypeID);
-  const nameMap     = {};
- 
-  // Try invTypes first (most SDE builds), fall back to invtypes (lowercase)
-  const nameTables  = [
-    { t: 'invTypes',    col: 'typeName', idcol: 'typeID' },
-    { t: 'invtypes',    col: 'typeName', idcol: 'typeID' },
-    { t: 'invTypes_en', col: 'typeName', idcol: 'typeID' },
-    { t: 'types',       col: 'name',     idcol: 'id'     },
-  ];
- 
-  // Detect which invTypes table exists once and reuse
-  let invTypesTable = null;
-  for (const q of nameTables) {
-    try {
-      await sdeDb.get(`SELECT 1 FROM ${q.t} LIMIT 1`);
-      invTypesTable = q;
-      break;
-    } catch (_) {}
-  }
- 
-  if (invTypesTable) {
-    // Batch fetch: SQLite supports up to ~999 params in IN clause
-    const chunks = [];
-    for (let i = 0; i < matTypeIds.length; i += 900) {
-      chunks.push(matTypeIds.slice(i, i + 900));
-    }
-    for (const chunk of chunks) {
-      const placeholders = chunk.map(() => '?').join(',');
-      try {
-        const rows = await sdeDb.all(
-          `SELECT ${invTypesTable.idcol} AS typeID, ${invTypesTable.col} AS typeName
-             FROM ${invTypesTable.t}
-            WHERE ${invTypesTable.idcol} IN (${placeholders})`,
-          chunk
-        );
-        rows.forEach(r => { nameMap[r.typeID] = r.typeName; });
-      } catch (_) {}
-    }
-  }
- 
-  // ── 3. Detect sub-components (types that are themselves manufactured) ───────
-  // A material "is a component" if there exists a blueprint that produces it.
-  const componentSet = new Set();
-  for (const typeId of matTypeIds) {
-    try {
-      const row = await sdeDb.get(
-        `SELECT 1 FROM industryActivityProducts
-          WHERE activityID = ? AND productTypeID = ? LIMIT 1`,
-        MANUFACTURING, typeId
-      );
-      if (row) componentSet.add(typeId);
-    } catch (_) {}
-  }
- 
-  // ── 4. Apply ME bonus ─────────────────────────────────────────────────────
-  const clampedME = Math.max(0, Math.min(10, me));
- 
-  const materials = matRows.map(row => {
-    const baseQty     = row.quantity;
-    const adjustedQty = baseQty <= 1
-      ? 1
-      : Math.max(1, Math.ceil(baseQty * (1 - clampedME / 100)));
-    return {
-      typeId:      row.materialTypeID,
-      name:        nameMap[row.materialTypeID] || `Type ${row.materialTypeID}`,
-      baseQty,
-      adjustedQty,
-      isComponent: componentSet.has(row.materialTypeID),
-    };
-  });
- 
-  // ── 5. Resolve product info from industryActivityProducts ─────────────────
-  let productTypeId = null;
-  let productName   = null;
-  let productQty    = 1;
- 
-  try {
-    const prodRow = await sdeDb.get(
-      `SELECT productTypeID, quantity
-         FROM industryActivityProducts
-        WHERE typeID     = ?
-          AND activityID = ?
-        LIMIT 1`,
-      blueprintTypeId, MANUFACTURING
-    );
-    if (prodRow) {
-      productTypeId = prodRow.productTypeID;
-      productQty    = prodRow.quantity || 1;
-      if (invTypesTable) {
-        try {
-          const nameRow = await sdeDb.get(
-            `SELECT ${invTypesTable.col} AS typeName
-               FROM ${invTypesTable.t}
-              WHERE ${invTypesTable.idcol} = ?`,
-            productTypeId
-          );
-          productName = nameRow?.typeName || null;
-        } catch (_) {}
-      }
-    }
-  } catch (e) {
-    console.warn('[sde-blueprint-materials] product lookup failed:', e.message);
-  }
- 
-  return { materials, productTypeId, productName, productQty };
-});
- 
-ipcMain.handle('get-pi-colonies', async (_, characterId) => {
-  return charInfoDb.getCharacterPIColonies(characterId);
-});
- 
-// ─── IPC: Wallet journal / transactions / loyalty points (from CharDB) ────────
-ipcMain.handle('get-wallet-journal', async (_, characterId) => {
-  return charInfoDb.getWalletJournal(characterId);
-});
- 
-ipcMain.handle('get-wallet-transactions', async (_, characterId) => {
-  return charInfoDb.getWalletTransactions(characterId);
-});
- 
-ipcMain.handle('get-loyalty-points', async (_, characterId) => {
-  return charInfoDb.getLoyaltyPoints(characterId);
-});
- 
-async function syncAssetsInternal(characterId) {
-  const token = await getValidToken(characterId);
-  let allAssets = [];
-  let page = 1;
-  while (true) {
-    const data = await httpGet(
-      `${ESI_BASE}/v3/characters/${characterId}/assets/?page=${page}&datasource=tranquility`,
-      { Authorization: `Bearer ${token}` }
-    );
-    allAssets = allAssets.concat(data);
-    if (!data || data.length < 1000) break;
-    page++;
-  }
- 
-  const typeIds     = [...new Set(allAssets.map(a => a.type_id).filter(Boolean))];
-  const nameMap     = await resolveNames(typeIds);
- 
-  // Build a Set of all item_ids so we can detect container-child rows.
-  // Items whose location_id matches another item's item_id are nested inside
-  // a container or fitted to a ship — their location is NOT a station/structure
-  // and must NOT be sent to the locator (it will always fail for those IDs).
-  // The getCharacterAssets() JOIN walk handles resolving their display location.
-  const allItemIds     = new Set(allAssets.map(a => a.item_id));
-  const rootLocationIds = [...new Set(
-    allAssets
-      .map(a => a.location_id)
-      .filter(id => id && !allItemIds.has(id))   // keep only real station/structure IDs
-  )];
- 
-  // Resolve all location metadata via the shared locator module.
-  // Handles NPC stations, player structures (ESI auth -> Hammertime -> zKillboard -> adam4eve).
-  const locationMeta = await getLocator().resolveLocations(rootLocationIds, characterId);
- 
-  // locationMeta[id] has the full locator shape:
-  //   { name, solar_system_id, solar_system_name, constellation_id, constellation_name,
-  //     region_id, region_name, security_status, owner_id, owner_name }
-  const assets = allAssets.map(asset => {
-    const loc = locationMeta[asset.location_id] || {};
-    return {
-      item_id:            asset.item_id,
-      type_id:            asset.type_id,
-      name:               nameMap[asset.type_id] || `Type ${asset.type_id}`,
-      location_id:        asset.location_id,
-      // Store null (not a placeholder string) so getUnresolvedAssetLocations() can find it
-      location_name:      loc.name || null,
-      quantity:           asset.is_singleton ? 1 : (asset.quantity || 1),
-      volume:             asset.volume || 0,
-      is_singleton:       asset.is_singleton,
-      location_flag:      asset.location_flag || asset.flag || '',
-      solar_system_id:    loc.solar_system_id    || null,
-      solar_system_name:  loc.solar_system_name  || null,
-      constellation_id:   loc.constellation_id   || null,
-      constellation_name: loc.constellation_name || null,
-      region_id:          loc.region_id          || null,
-      region_name:        loc.region_name        || null,
-      security_status:    typeof loc.security_status === 'number' ? loc.security_status : null,
-      owner_id:           loc.owner_id           || null,
-      owner_name:         loc.owner_name         || null,
-    };
-  });
- 
-  // ── Write to SQLite (character_information.db) ───────────────────────────────
-  // This is the primary store the assets page reads from. Always write here so
-  // the 12-hour stale sync keeps the DB current, not just blueprints.json.
-  await charInfoDb.ensureCharacterTables(characterId);
-  await charInfoDb.replaceAssets(characterId, assets);
- 
-  // ── Re-resolve any locations that came back null ─────────────────────────────
-  // Some Upwell structures fail on first pass (401, Hammertime miss, etc.).
-  // After replaceAssets the DB has nulls for those rows. We do a second targeted
-  // pass — the locator's internal cache + Hammertime will often succeed on a
-  // retry now that external caches may have been primed.
-  const unresolved = await charInfoDb.getUnresolvedAssetLocations(characterId).catch(() => []);
-  if (unresolved.length) {
-    console.log(`[AssetSync] Re-resolving ${unresolved.length} unresolved location(s) for character ${characterId}...`);
-    for (const locationId of unresolved) {
-      try {
-        const geo = await getLocator().resolveLocation(locationId, characterId);
-        if (geo && (geo.name || geo.solar_system_id)) {
-          await charInfoDb.updateAssetLocation(characterId, locationId, geo);
-        }
-      } catch (e) {
-        console.log(`[AssetSync] Re-resolve failed for location ${locationId}: ${e.message}`);
-      }
-    }
-    const stillUnresolved = await charInfoDb.getUnresolvedAssetLocations(characterId).catch(() => []);
-    console.log(`[AssetSync] Re-resolve complete: ${unresolved.length - stillUnresolved.length} fixed, ${stillUnresolved.length} still unresolved.`);
-  }
- 
-  // ── Also keep the legacy blueprints.json in sync ─────────────────────────────
-  const db = loadDB();
-  db.assets = db.assets || {};
-  db.assets[characterId] = { updatedAt: Date.now(), items: assets };
-  saveDB(db);
- 
-  return { count: assets.length, items: assets };
-}
- 
-ipcMain.handle('sync-assets', async (_, characterId) => {
-  return syncAssetsInternal(characterId);
-});
- 
-ipcMain.handle('sync-all-assets', async () => {
-  // Check cache first to avoid re-syncing too often
-  try {
-    const cached = readCache('sync_all_assets');
-    if (cached && cached.updatedAt && (Date.now() - cached.updatedAt) < (1000 * 60 * 60 * 6)) { // 6 hours
-      return cached.result;
-    }
-  } catch (e) {
-    // ignore cache errors
-  }
- 
-  const db = loadDB();
-  const accounts = Object.values(db.accounts || {});
-  const result = { total: 0, characters: [] };
- 
-  // Limit concurrency to avoid hammering ESI
-  const CONCURRENCY = 4;
-  async function workerPool(list, fn) {
-    const results = [];
-    let i = 0;
-    async function worker() {
-      while (i < list.length) {
-        const idx = i++;
-        try {
-          results[idx] = await fn(list[idx]);
-        } catch (err) {
-          results[idx] = { error: err.message };
-        }
-      }
-    }
-    const workers = Array.from({ length: Math.min(CONCURRENCY, list.length) }, worker);
-    await Promise.all(workers);
-    return results;
-  }
- 
-  const syncResults = await workerPool(accounts, async (account) => {
-    try {
-      const r = await syncAssetsInternal(account.characterId);
-      return { characterId: account.characterId, characterName: account.characterName, count: r.count };
-    } catch (err) {
-      return { characterId: account.characterId, characterName: account.characterName, error: err.message };
-    }
-  });
- 
-  for (const s of syncResults) {
-    if (s.count) result.total += s.count;
-    result.characters.push(s);
-  }
- 
-  // Cache the overall result for faster subsequent calls
-  try { writeCache('sync_all_assets', { updatedAt: Date.now(), result }, 0.25); } catch (e) {}
- 
-  return result;
-});
+
+
  
 ipcMain.handle('watch-ping-file', async (_, filePath) => {
   try {
@@ -1812,57 +1170,8 @@ ipcMain.handle('unwatch-ping-file', () => {
 const { registerJabberHandlers } = require('./src/jabber_ipc');
 registerJabberHandlers({ jabberDataDb, createPingAlertWindow });
  
-ipcMain.handle('get-assets', (_, characterId) => {
-  const db = loadDB();
-  return db.assets?.[characterId] || null;
-});
- 
-ipcMain.handle('get-all-assets', () => {
-  const db = loadDB();
-  const all = [];
-  for (const [charId, data] of Object.entries(db.assets || {})) {
-    const account = db.accounts[charId];
-    if (data && data.items) {
-      data.items.forEach(asset => all.push({
-        ...asset,
-        characterId: charId,
-        characterName: account?.characterName || 'Unknown',
-      }));
-    }
-  }
-  return all;
-});
- 
-// ─── IPC: Wallet Balance ──────────────────────────────────────────────────────
-ipcMain.handle('get-wallet', async (_, characterId) => {
-  try {
-    const token = await getValidToken(characterId);
-    const url = `${ESI_BASE}/v1/characters/${characterId}/wallet/?datasource=tranquility`;
-    
-    // The wallet endpoint returns a flat number representing the ISK balance
-    const walletBalance = await httpGet(url, { Authorization: `Bearer ${token}` });
-    return typeof walletBalance === 'number' ? walletBalance : 0;
-  } catch (e) {
-    console.warn(`Failed to fetch wallet for ${characterId}:`, e.message || e);
-    return 0;
-  }
-});
- 
-// ─── IPC: Public ESI (no auth) ────────────────────────────────────────────────
-// IPC: resolve a single location (structure or station) -> full metadata
-// Used by dashboard for home station and blueprints for location names.
-// All three should use getLocator(), not bare locator
-ipcMain.handle('get-structure-info', async (_, structureId, characterId) => {
-  return getLocator().resolveLocation(structureId, characterId);
-});
- 
-ipcMain.handle('resolve-location', async (_, locationId, characterId) => {
-  return getLocator().resolveLocation(locationId, characterId);
-});
- 
-ipcMain.handle('resolve-system-names', async (_, systemIds) => {
-  return getLocator().resolveSystemNames(systemIds);
-});
+
+
  
 // ─── IPC: Station / structure database sync ───────────────────────────────────
 // Thin wrapper — all sync logic lives in locator.syncStationDatabase() so
@@ -1917,110 +1226,7 @@ ipcMain.handle('sync-upwell-database', async (_, opts = {}) => {
   return { npc: 0, upwell: 0 };
 });
  
-ipcMain.handle('esi-search', async (_, query) => {
-  return httpGet(`${ESI_BASE}/v2/search/?categories=inventory_type&search=${encodeURIComponent(query)}&strict=false&datasource=tranquility`);
-});
- 
-ipcMain.handle('esi-names', async (_, ids) => {
-  if (!ids || !ids.length) return [];
-  const map = await resolveNames(ids);
-  return ids.map(id => ({ id, name: map[id] || `Type ${id}` }));
-});
- 
- 
-// ─── IPC: Public ESI proxy ────────────────────────────────────────────────────
-ipcMain.handle('esi-fetch', async (_, url) => {
-  return httpGet(url);
-});
- 
-// ─── IPC: Global market prices (adjusted_price / average_price) ──────────────
-// Single public endpoint — no auth. Returns all tradeable items at once.
-// This is the same price source EVE uses for net worth calculations.
-// Cache aggressively: prices update ~daily.
-ipcMain.handle('get-market-prices', async () => {
-  const cacheKey = 'market_prices_global';
-  const cached = readCache(cacheKey);
-  if (cached) return cached;
-  try {
-    const data = await httpGet(`${ESI_BASE}/v1/markets/prices/?datasource=tranquility`);
-    // Convert array to map keyed by type_id for O(1) lookup
-    const map = {};
-    if (Array.isArray(data)) {
-      data.forEach(item => {
-        map[item.type_id] = {
-          adjusted: item.adjusted_price || 0,
-          average:  item.average_price  || 0,
-        };
-      });
-    }
-    writeCache(cacheKey, map, 0.5); // cache 12 hours
-    return map;
-  } catch (e) {
-    console.warn('get-market-prices failed:', e.message);
-    return {};
-  }
-});
- 
 // ─── IPC: Authenticated character sheet ──────────────────────────────────────
-ipcMain.handle('get-character-info', async (_, characterId) => {
-  try {
-    const token = await getValidToken(characterId);
-    return await httpGet(
-      `${ESI_BASE}/v5/characters/${characterId}/?datasource=tranquility`,
-      { Authorization: `Bearer ${token}` }
-    );
-  } catch (e) {
-    console.warn(`get-character-info failed for ${characterId}:`, e.message);
-    return null;
-  }
-});
- 
-// ─── IPC: Clones / home location ─────────────────────────────────────────────
-ipcMain.handle('get-clones', async (_, characterId) => {
-  try {
-    const token = await getValidToken(characterId);
-    return await httpGet(
-      `${ESI_BASE}/v3/characters/${characterId}/clones/?datasource=tranquility`,
-      { Authorization: `Bearer ${token}` }
-    );
-  } catch (e) {
-    console.warn(`get-clones failed for ${characterId}:`, e.message);
-    return null;
-  }
-});
- 
-// ─── IPC: Character market orders (for escrow) ───────────────────────────────
-// Returns active buy orders — their 'escrow' field is ISK locked up.
-ipcMain.handle('get-character-orders', async (_, characterId) => {
-  try {
-    const token = await getValidToken(characterId);
-    const orders = await httpGet(
-      `${ESI_BASE}/v2/characters/${characterId}/orders/?datasource=tranquility`,
-      { Authorization: `Bearer ${token}` }
-    );
-    return Array.isArray(orders) ? orders : [];
-  } catch (e) {
-    console.warn(`get-character-orders failed for ${characterId}:`, e.message);
-    return [];
-  }
-});
- 
-// ─── IPC: Character contracts (for escrow) ───────────────────────────────────
-// Returns all contracts; we sum 'price' on outstanding buyer contracts.
-ipcMain.handle('get-character-contracts', async (_, characterId) => {
-  try {
-    const token = await getValidToken(characterId);
-    const contracts = await httpGet(
-      `${ESI_BASE}/v1/characters/${characterId}/contracts/?datasource=tranquility`,
-      { Authorization: `Bearer ${token}` }
-    );
-    return Array.isArray(contracts) ? contracts : [];
-  } catch (e) {
-    console.warn(`get-character-contracts failed for ${characterId}:`, e.message);
-    return [];
-  }
-});
- 
 ipcMain.handle('cache-get', (_, key) => {
   return readCache(key);
 });
@@ -2055,120 +1261,6 @@ ipcMain.handle('app-save-config', (_, appConfig) => {
   return true;
 });
  
-ipcMain.handle('get-blueprint-materials', async (_, typeId) => {
-  if (bpCache[typeId]) return bpCache[typeId];
-  try {
-    const data = await httpGet(`${FUZZWORK_BASE}/api/blueprint.php?typeid=${typeId}&runs=1&me=0&pe=0`);
-    bpCache[typeId] = data;
-    return data;
-  } catch (err) {
-    console.warn(`Blueprint ${typeId} not found in Fuzzwork, returning empty materials:`, err.message);
-    // Return empty materials object so app can handle gracefully
-    const emptyData = { materials: [], blueprintTypeID: typeId };
-    bpCache[typeId] = emptyData;
-    return emptyData;
-  }
-});
- 
-ipcMain.handle('find-bp-for-product', async (_, productTypeId) => {
-  const key = `prod_${productTypeId}`;
-  if (bpCache[key]) return bpCache[key];
-  try {
-    const data = await httpGet(`${FUZZWORK_BASE}/api/blueprint.php?producttypeid=${productTypeId}&runs=1&me=0&pe=0`);
-    bpCache[key] = data;
-    return data;
-  } catch (err) {
-    console.warn(`No blueprint found for product ${productTypeId}:`, err.message);
-    // Return null so app knows no blueprint exists
-    return null;
-  }
-});
- 
-ipcMain.handle('get-product-for-blueprint', async (_, blueprintTypeId) => {
-  // Query SDE to find what this blueprint produces
-  if (!sdeDb) return null;
-  try {
-    const result = await sdeDb.get('SELECT productTypeID FROM invBlueprintTypes WHERE blueprintTypeID = ?', blueprintTypeId);
-    if (result && result.productTypeID) {
-      console.log(`Blueprint ${blueprintTypeId} produces type ${result.productTypeID}`);
-      return result.productTypeID;
-    }
-    return null;
-  } catch (err) {
-    console.warn(`Failed to look up product for blueprint ${blueprintTypeId}:`, err.message);
-    return null;
-  }
-});
- 
-// ─── Jita Market Prices (Jita 4-4 is station 60003760) ──────────────────────
-ipcMain.handle('get-jita-prices', async (_, typeIds) => {
-  const JITA_STATION_ID = 60003760; // Jita IV - Moon 4 (Caldari Navy Assembly Plant)
-  const prices = {};
-  
-  try {
-    // Get market orders for each type - batch requests efficiently
-    for (const typeId of typeIds) {
-      const cacheKey = `jita_price_${typeId}`;
-      const cached = readCache(cacheKey);
-      
-      if (cached) {
-        prices[typeId] = cached;
-        continue;
-      }
-      
-      try {
-        // Fetch orders for this type in The Forge region and filter for Jita station
-        // The Forge region id is 10000002; Jita station id is used to pick station-specific orders
-        const REGION_FORGE = 10000002;
-        let orderData = [];
-        try {
-          orderData = await httpGet(
-            `${ESI_BASE}/v1/markets/${REGION_FORGE}/orders/?datasource=tranquility&type_id=${typeId}&order_type=all`
-          );
-        } catch (e) {
-          // If region endpoint fails, fall back to empty
-          orderData = [];
-        }
- 
-        // Filter for orders at Jita station if present
-        orderData = Array.isArray(orderData) ? orderData.filter(o => Number(o.location_id) === JITA_STATION_ID) : [];
- 
-        if (!orderData || orderData.length === 0) {
-          prices[typeId] = { buy: 0, sell: 0 };
-          writeCache(cacheKey, { buy: 0, sell: 0 }, 1); // Cache misses for 1 day
-          continue;
-        }
- 
-        // Separate buy and sell orders
-        const buyOrders = orderData.filter(o => o.is_buy_order);
-        const sellOrders = orderData.filter(o => !o.is_buy_order);
-        
-        // Get best (highest) buy price and best (lowest) sell price
-        const bestBuyPrice = buyOrders.length > 0
-          ? Math.max(...buyOrders.map(o => o.price))
-          : 0;
-        
-        const bestSellPrice = sellOrders.length > 0
-          ? Math.min(...sellOrders.map(o => o.price))
-          : 0;
-        
-        const priceData = { buy: bestBuyPrice, sell: bestSellPrice };
-        prices[typeId] = priceData;
-        
-        // Cache prices for 6 hours
-        writeCache(cacheKey, priceData, 0.25);
-      } catch (e) {
-        console.log(`Failed to fetch Jita price for ${typeId}:`, e.message);
-        prices[typeId] = { buy: 0, sell: 0 };
-      }
-    }
-  } catch (e) {
-    console.error('Market price lookup error:', e);
-  }
-  
-  return prices;
-});
- 
 // ─── Name resolver (batched) ─────────────────────────────────────────────────
 async function resolveNames(ids) {
   const uncached = ids.filter(id => !nameCache[id]);
@@ -2185,27 +1277,9 @@ async function resolveNames(ids) {
   return Object.fromEntries(ids.map(id => [id, nameCache[id] || `Type ${id}`]));
 }
  
-// IPC: SDE name lookup (best-effort fallback to a local SDE sqlite file)
-ipcMain.handle('sde-get-name', async (_, typeId) => {
-  if (!sdeDb) return null;
-  const tries = [
-    { t: 'invTypes', col: 'typeName', idcol: 'typeID' },
-    { t: 'invtypes', col: 'typeName', idcol: 'typeID' },
-    { t: 'invTypes_en', col: 'typeName', idcol: 'typeID' },
-    { t: 'types', col: 'name', idcol: 'id' }
-  ];
-  for (const q of tries) {
-    try {
-      const row = await sdeDb.get(`SELECT ${q.col} as name FROM ${q.t} WHERE ${q.idcol} = ?`, typeId);
-      if (row && row.name) return row.name;
-    } catch (e) { /* ignore */ }
-  }
-  return null;
-});
- 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 app.on('window-all-closed', () => {
-  if (callbackServer) callbackServer.close();
+  if (callbackServerState.server) callbackServerState.server.close();
   if (process.platform !== 'darwin') app.quit();
 });
 app.on('activate', () => {
