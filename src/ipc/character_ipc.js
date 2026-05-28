@@ -1,4 +1,4 @@
-const { ipcMain } = require('electron');
+﻿const { ipcMain } = require('electron');
 
 const ESI_BASE = 'https://esi.evetech.net';
 
@@ -15,6 +15,7 @@ const ESI_BASE = 'https://esi.evetech.net';
  * @param {function} deps.writeCache       - writes to persistent cache
  */
 function registerCharacterHandlers({
+  ipcHandle,
   charInfoDb,
   loadDB,
   getValidToken,
@@ -25,15 +26,15 @@ function registerCharacterHandlers({
 }) {
 
   // ─── IPC: CharDB reads (SQLite — no ESI call) ─────────────────────────────
-  ipcMain.handle('get-character-info-db', async (_, characterId) => {
+  ipcHandle('get-character-info-db', async (_, characterId) => {
     return charInfoDb.getCharacterData(characterId);
   });
 
-  ipcMain.handle('get-character-assets-db', async (_, characterId) => {
+  ipcHandle('get-character-assets-db', async (_, characterId) => {
     return charInfoDb.getCharacterAssets(characterId);
   });
 
-  ipcMain.handle('get-character-blueprints-db', async (_, characterId) => {
+  ipcHandle('get-character-blueprints-db', async (_, characterId) => {
     return charInfoDb.getCharacterBlueprints(characterId);
   });
 
@@ -42,7 +43,7 @@ function registerCharacterHandlers({
   // Returns a flat array of blueprint rows, each augmented with characterId
   // and characterName from the accounts store.
   // Called by: loadBlueprintLibrary() in blueprints.js
-  ipcMain.handle('get-all-blueprints-from-db', async () => {
+  ipcHandle('get-all-blueprints-from-db', async () => {
     const db       = loadDB();
     const accounts = db.accounts || {};
     const all      = [];
@@ -67,7 +68,7 @@ function registerCharacterHandlers({
   // ─── IPC: Character jobs ──────────────────────────────────────────────────
   // Completed jobs never change — cache aggressively to avoid hammering ESI.
   // This is the single biggest source of 429s in the dashboard refresh loop.
-  ipcMain.handle('get-character-jobs', async (_, characterId) => {
+  ipcHandle('get-character-jobs', async (_, characterId) => {
     const cacheKey = `jobs_completed_${characterId}`;
     const cached   = readCache(cacheKey);
     if (cached) return cached;
@@ -101,7 +102,7 @@ function registerCharacterHandlers({
   });
 
   // ─── IPC: Character public info (ESI) ────────────────────────────────────
-  ipcMain.handle('get-character-info', async (_, characterId) => {
+  ipcHandle('get-character-info', async (_, characterId) => {
     try {
       const token = await getValidToken(characterId);
       return await httpGet(
@@ -115,7 +116,7 @@ function registerCharacterHandlers({
   });
 
   // ─── IPC: Clones / home location ─────────────────────────────────────────
-  ipcMain.handle('get-clones', async (_, characterId) => {
+  ipcHandle('get-clones', async (_, characterId) => {
     try {
       const token = await getValidToken(characterId);
       return await httpGet(
@@ -129,13 +130,13 @@ function registerCharacterHandlers({
   });
 
   // ─── IPC: PI colonies (from CharDB) ──────────────────────────────────────
-  ipcMain.handle('get-pi-colonies', async (_, characterId) => {
+  ipcHandle('get-pi-colonies', async (_, characterId) => {
     return charInfoDb.getCharacterPIColonies(characterId);
   });
 
   // ─── IPC: Character market orders (for escrow) ───────────────────────────
   // Returns active buy orders — their 'escrow' field is ISK locked up.
-  ipcMain.handle('get-character-orders', async (_, characterId) => {
+  ipcHandle('get-character-orders', async (_, characterId) => {
     try {
       const token  = await getValidToken(characterId);
       const orders = await httpGet(
@@ -151,7 +152,7 @@ function registerCharacterHandlers({
 
   // ─── IPC: Character contracts (for escrow) ───────────────────────────────
   // Returns all contracts; we sum 'price' on outstanding buyer contracts.
-  ipcMain.handle('get-character-contracts', async (_, characterId) => {
+  ipcHandle('get-character-contracts', async (_, characterId) => {
     try {
       const token     = await getValidToken(characterId);
       const contracts = await httpGet(
@@ -166,7 +167,7 @@ function registerCharacterHandlers({
   });
 
   // ─── IPC: Wallet balance (ESI live) ──────────────────────────────────────
-  ipcMain.handle('get-wallet', async (_, characterId) => {
+  ipcHandle('get-wallet', async (_, characterId) => {
     try {
       const token         = await getValidToken(characterId);
       const url           = `${ESI_BASE}/v1/characters/${characterId}/wallet/?datasource=tranquility`;
@@ -179,15 +180,15 @@ function registerCharacterHandlers({
   });
 
   // ─── IPC: Wallet journal / transactions / loyalty points (from CharDB) ───
-  ipcMain.handle('get-wallet-journal', async (_, characterId) => {
+  ipcHandle('get-wallet-journal', async (_, characterId) => {
     return charInfoDb.getWalletJournal(characterId);
   });
 
-  ipcMain.handle('get-wallet-transactions', async (_, characterId) => {
+  ipcHandle('get-wallet-transactions', async (_, characterId) => {
     return charInfoDb.getWalletTransactions(characterId);
   });
 
-  ipcMain.handle('get-loyalty-points', async (_, characterId) => {
+  ipcHandle('get-loyalty-points', async (_, characterId) => {
     return charInfoDb.getLoyaltyPoints(characterId);
   });
 }

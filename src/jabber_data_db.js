@@ -222,6 +222,11 @@ async function getMessagesBySignature(sig, limit = 100) {
   );
 }
 
+async function getMessageById(id) {
+  if (!jabberDb) return null;
+  return jabberDb.get('SELECT * FROM jabber_messages WHERE id = ?', id) || null;
+}
+
 async function wipeJabberDb() {
   if (!jabberDb) return;
   await jabberDb.exec('DELETE FROM jabber_messages');
@@ -237,6 +242,7 @@ module.exports = {
   insertJabberMessage,
   parseJabberMessage,   // exported so it can be unit-tested
   getRecentMessages,
+  getMessageById,
   getMessagesBySignature,
   wipeJabberDb,
 };

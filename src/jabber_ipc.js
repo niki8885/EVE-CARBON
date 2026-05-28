@@ -131,8 +131,7 @@ function registerJabberHandlers({ jabberDataDb, createPingAlertWindow }) {
 
   ipcMain.handle('jabber-open-ping-alert', async (_, rowId) => {
     try {
-      const rows = await jabberDataDb.getRecentMessages(1000);
-      const row  = rows.find(r => r.id === rowId);
+      const row = await jabberDataDb.getMessageById(rowId);
       if (!row) {
         console.warn('[jabberDataDb] jabber-open-ping-alert: row not found for id', rowId);
         return false;

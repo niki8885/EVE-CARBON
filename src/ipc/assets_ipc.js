@@ -1,4 +1,4 @@
-const { ipcMain, BrowserWindow } = require('electron');
+﻿const { ipcMain, BrowserWindow } = require('electron');
 
 const ESI_BASE = 'https://esi.evetech.net';
 
@@ -21,6 +21,7 @@ const ASSET_STALE_MS = 12 * 60 * 60 * 1000;
  * @param {function} deps.coreCharacterSync  - runs the core (non-asset) character sync
  */
 function registerAssetHandlers({
+  ipcHandle,
   getValidToken,
   httpGet,
   resolveNames,
@@ -130,7 +131,7 @@ function registerAssetHandlers({
   }
 
   // ─── IPC: Core-only auto-sync (20-min cadence, no assets) ────────────────
-  ipcMain.handle('sync-character-core', async (event, characterId) => {
+  ipcHandle('sync-character-core', async (event, characterId) => {
     const db = loadDB();
     const account = db.accounts[characterId];
     if (!account) throw new Error('Account not found');
@@ -146,7 +147,7 @@ function registerAssetHandlers({
   });
 
   // ─── IPC: Asset-only sync — skips if synced within the last 12 hours ─────
-  ipcMain.handle('sync-character-assets-if-stale', async (event, characterId) => {
+  ipcHandle('sync-character-assets-if-stale', async (event, characterId) => {
     const db = loadDB();
     const account = db.accounts[characterId];
     if (!account) throw new Error('Account not found');
@@ -184,12 +185,12 @@ function registerAssetHandlers({
   });
 
   // ─── IPC: Sync assets for a single character ──────────────────────────────
-  ipcMain.handle('sync-assets', async (_, characterId) => {
+  ipcHandle('sync-assets', async (_, characterId) => {
     return syncAssetsInternal(characterId);
   });
 
   // ─── IPC: Sync assets for all characters (concurrency-limited) ───────────
-  ipcMain.handle('sync-all-assets', async () => {
+  ipcHandle('sync-all-assets', async () => {
     // Check cache first to avoid re-syncing too often (6-hour gate)
     try {
       const cached = readCache('sync_all_assets');
@@ -242,13 +243,13 @@ function registerAssetHandlers({
   });
 
   // ─── IPC: Get saved assets for a single character (from JSON DB) ──────────
-  ipcMain.handle('get-assets', (_, characterId) => {
+  ipcHandle('get-assets', (_, characterId) => {
     const db = loadDB();
     return db.assets?.[characterId] || null;
   });
 
   // ─── IPC: Get all assets across all characters (from JSON DB) ────────────
-  ipcMain.handle('get-all-assets', () => {
+  ipcHandle('get-all-assets', () => {
     const db  = loadDB();
     const all = [];
     for (const [charId, data] of Object.entries(db.assets || {})) {

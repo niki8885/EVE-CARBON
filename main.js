@@ -12,6 +12,9 @@ const { registerCharacterHandlers } = require('./src/ipc/character_ipc');
 const { registerEsiHandlers }       = require('./src/ipc/esi_ipc');
 const { registerBlueprintHandlers } = require('./src/ipc/blueprint_ipc');
 const { registerAssetHandlers }     = require('./src/ipc/assets_ipc');
+const { registerStationHandlers }   = require('./src/ipc/station_ipc');
+const { registerConfigHandlers }    = require('./src/ipc/config_ipc');
+const { registerPingFileHandlers }  = require('./src/ipc/ping_ipc');
 
 // Load environment variables from .env file in both development and production.
 const envPath = app.isPackaged
@@ -125,8 +128,9 @@ async function initSde() {
  
 // ─── Paths ────────────────────────────────────────────────────────────────────
 let userDataPath, dbPath, configPath, cacheDir, appDataDir;
-let pingFileWatcher = null;
-let pingFileWatchTimer = null;
+// Shared state for ping file watcher — passed into registerPingFileHandlers
+// so the app-quit handler can still close it without knowing the internals.
+const pingWatcherState = { watcher: null, timer: null };
  
 function initPaths() {
   userDataPath = app.getPath('userData');
@@ -170,6 +174,14 @@ function writeCache(key, value, days = 7) {
   } catch (e) { /* ignore */ }
 }
  
+// ─── Safe IPC re-registration wrapper ───────────────────────────────────────
+// Removes any existing handler first so calling register*Handlers() more than
+// once (e.g. after a dev hot-reload) never throws "second handler" errors.
+function ipcHandle(channel, fn) {
+  ipcMain.removeHandler(channel);
+  ipcMain.handle(channel, fn);
+}
+
 // Locator: shared location resolver (player structures + NPC stations)
 let locator = null;
 function getLocator() {
@@ -197,8 +209,8 @@ app.whenReady().then(async () => {
   } catch (e) {
     console.error('[jabberDataDb] init failed, continuing:', e.message);
   }
-  createWindow();
   registerAccountHandlers({
+    ipcHandle,
     loadDB,
     saveDB,
     charInfoDb,
@@ -207,6 +219,7 @@ app.whenReady().then(async () => {
     callbackServerState,
   });
   registerCharacterHandlers({
+    ipcHandle,
     charInfoDb,
     loadDB,
     getValidToken,
@@ -216,6 +229,7 @@ app.whenReady().then(async () => {
     writeCache,
   });
   registerEsiHandlers({
+    ipcHandle,
     httpGet,
     httpPost,
     resolveNames,
@@ -226,6 +240,7 @@ app.whenReady().then(async () => {
     getSdeDb: () => sdeDb,
   });
   registerBlueprintHandlers({
+    ipcHandle,
     getValidToken,
     httpGet,
     resolveNames,
@@ -234,6 +249,7 @@ app.whenReady().then(async () => {
     charInfoDb,
   });
   registerAssetHandlers({
+    ipcHandle,
     getValidToken,
     httpGet,
     resolveNames,
@@ -245,6 +261,33 @@ app.whenReady().then(async () => {
     charInfoDb,
     coreCharacterSync,
   });
+  registerStationHandlers({
+    ipcHandle,
+    charInfoDb,
+    getLocator,
+    httpPost,
+  });
+  registerConfigHandlers({
+    ipcHandle,
+    readCache,
+    writeCache,
+    loadConfig,
+    saveConfig,
+  });
+  registerPingFileHandlers({
+    ipcHandle,
+    watcherState: pingWatcherState,
+  });
+  // Jabber must register AFTER initPaths() so configPath is set, and AFTER
+  // registerConfigHandlers() so app-get-config is available when jabber_ipc
+  // reads saved credentials on startup.
+  const { registerJabberHandlers } = require('./src/jabber_ipc');
+  registerJabberHandlers({ ipcHandle, jabberDataDb, createPingAlertWindow });
+  // Open the window only after ALL IPC handlers are registered.
+  // Previously createWindow() was called first, causing the renderer to invoke
+  // channels (app-get-config, jabber-get-messages, etc.) before their handlers
+  // existed — resulting in "No handler registered for 'x'" errors.
+  createWindow();
 });
  
  
@@ -861,7 +904,7 @@ async function fullCharacterSync(characterId, characterName, progressCb) {
 }
  
 // ─── IPC: Full character sync (manual re-sync button) ─────────────────────────
-ipcMain.handle('sync-character-full', async (event, characterId) => {
+ipcHandle('sync-character-full', async (event, characterId) => {
   const db = loadDB();
   const account = db.accounts[characterId];
   if (!account) throw new Error('Account not found');
@@ -1118,150 +1161,7 @@ async function coreCharacterSync(characterId, characterName, progressCb) {
  
   return summary;
 }
- 
-// ─── Asset IPC handlers → src/ipc/assets_ipc.js ──────────────────────────────
- 
 
-
- 
-ipcMain.handle('watch-ping-file', async (_, filePath) => {
-  try {
-    if (pingFileWatcher) {
-      pingFileWatcher.close();
-      pingFileWatcher = null;
-    }
-    if (pingFileWatchTimer) {
-      clearTimeout(pingFileWatchTimer);
-      pingFileWatchTimer = null;
-    }
-    pingFileWatcher = fs.watch(filePath, { encoding: 'utf8' }, () => {
-      if (pingFileWatchTimer) clearTimeout(pingFileWatchTimer);
-      pingFileWatchTimer = setTimeout(async () => {
-        try {
-          const contents = fs.readFileSync(filePath, 'utf8');
-          BrowserWindow.getAllWindows().forEach(win => {
-            win.webContents.send('ping-file-updated', contents, filePath);
-          });
-        } catch (e) {
-          console.warn('Failed to read watched ping file:', e.message);
-        }
-      }, 250);
-    });
-    return true;
-  } catch (e) {
-    console.warn('Failed to watch ping file:', e.message);
-    return false;
-  }
-});
- 
-ipcMain.handle('unwatch-ping-file', () => {
-  if (pingFileWatcher) {
-    pingFileWatcher.close();
-    pingFileWatcher = null;
-  }
-  if (pingFileWatchTimer) {
-    clearTimeout(pingFileWatchTimer);
-    pingFileWatchTimer = null;
-  }
-  return true;
-});
- 
-// ─── Jabber IPC (extracted to src/jabber_ipc.js) ─────────────────────────────
-const { registerJabberHandlers } = require('./src/jabber_ipc');
-registerJabberHandlers({ jabberDataDb, createPingAlertWindow });
- 
-
-
- 
-// ─── IPC: Station / structure database sync ───────────────────────────────────
-// Thin wrapper — all sync logic lives in locator.syncStationDatabase() so
-// the locator remains the single authority on station/structure data.
-//
-// Returns { npc, upwell } on success, { skipped: true } if under 24 h old,
-// or { error: string } on failure.
-const STATION_SYNC_TTL_MS = 24 * 60 * 60 * 1000;
- 
-ipcMain.handle('sync-station-database', async (_, opts = {}) => {
-  const force = opts && opts.force === true;
- 
-  // Freshness guard — skip if synced recently and caller didn't force.
-  if (!force) {
-    const lastSync = await charInfoDb.getStationsLastSync('npc_stations').catch(() => 0);
-    if (Date.now() - lastSync < STATION_SYNC_TTL_MS) {
-      console.log('[StationSync] Skipped — synced less than 24 h ago.');
-      return { skipped: true };
-    }
-  }
- 
-  try {
-    await charInfoDb.initStationTables();
-    // Delegate entirely to the locator; pass httpPost so the locator can use
-    // the same POST helper (with auth headers, retries, etc.) as the rest of main.
-    const result = await getLocator().syncStationDatabase({ httpPost });
-    console.log(`[StationSync] IPC result: npc=${result.npc}, upwell=${result.upwell}, error=${result.error || 'none'}`);
-    return result;
-  } catch (e) {
-    console.error('[StationSync] Fatal error:', e.message, e.stack);
-    return { error: e.message };
-  }
-});
- 
-// Returns the ms-epoch timestamp of the last successful station sync, or 0.
-// Accepts optional { key } — defaults to 'npc_stations'.
-ipcMain.handle('get-station-sync-timestamp', async (_, opts = {}) => {
-  const key = (opts && opts.key) || 'npc_stations';
-  try {
-    return await charInfoDb.getStationsLastSync(key);
-  } catch {
-    return 0;
-  }
-});
- 
-// Upwell structures sync — placeholder for future implementation.
-// Currently a no-op that returns { upwell: 0, skipped: false } so the UI
-// button works without errors. Upwell structures are populated automatically
-// as characters are synced (locator._persistToStationDb).
-ipcMain.handle('sync-upwell-database', async (_, opts = {}) => {
-  console.log('[UpwellSync] Manual trigger — structures are seeded automatically during character syncs.');
-  return { npc: 0, upwell: 0 };
-});
- 
-// ─── IPC: Authenticated character sheet ──────────────────────────────────────
-ipcMain.handle('cache-get', (_, key) => {
-  return readCache(key);
-});
- 
-ipcMain.handle('cache-set', (_, key, value, days = 7) => {
-  writeCache(key, value, days);
-  return true;
-});
- 
-ipcMain.handle('ui-get-config', () => {
-  const cfg = loadConfig();
-  return cfg.uiTheme || null;
-});
- 
-ipcMain.handle('ui-save-config', (_, uiTheme) => {
-  const cfg = loadConfig();
-  cfg.uiTheme = uiTheme || {};
-  saveConfig(cfg);
-  return true;
-});
- 
-ipcMain.handle('app-get-config', () => {
-  const cfg = loadConfig();
-  return cfg || {};
-});
- 
-ipcMain.handle('app-save-config', (_, appConfig) => {
-  const cfg = loadConfig();
-  cfg.app = cfg.app || {};
-  cfg.app = { ...cfg.app, ...appConfig };
-  saveConfig(cfg);
-  return true;
-});
- 
-// ─── Name resolver (batched) ─────────────────────────────────────────────────
 async function resolveNames(ids) {
   const uncached = ids.filter(id => !nameCache[id]);
   if (uncached.length) {

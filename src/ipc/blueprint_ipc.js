@@ -1,4 +1,4 @@
-const { ipcMain } = require('electron');
+﻿const { ipcMain } = require('electron');
 
 const ESI_BASE = 'https://esi.evetech.net';
 
@@ -14,6 +14,7 @@ const ESI_BASE = 'https://esi.evetech.net';
  * @param {object}   deps.charInfoDb    - character info DB module (for get-all-blueprints-from-db)
  */
 function registerBlueprintHandlers({
+  ipcHandle,
   getValidToken,
   httpGet,
   resolveNames,
@@ -23,7 +24,7 @@ function registerBlueprintHandlers({
 }) {
 
   // ─── IPC: Fetch & sync blueprints for a character ──────────────────────────
-  ipcMain.handle('sync-blueprints', async (_, characterId) => {
+  ipcHandle('sync-blueprints', async (_, characterId) => {
     const token = await getValidToken(characterId);
     const db    = loadDB();
 
@@ -67,13 +68,13 @@ function registerBlueprintHandlers({
   });
 
   // ─── IPC: Get saved blueprints for a single character (from JSON DB) ───────
-  ipcMain.handle('get-blueprints', (_, characterId) => {
+  ipcHandle('get-blueprints', (_, characterId) => {
     const db = loadDB();
     return db.blueprints[characterId] || null;
   });
 
   // ─── IPC: Get all blueprints across all characters (from JSON DB) ──────────
-  ipcMain.handle('get-all-blueprints', () => {
+  ipcHandle('get-all-blueprints', () => {
     const db  = loadDB();
     const all = [];
     for (const [charId, data] of Object.entries(db.blueprints)) {
@@ -92,7 +93,7 @@ function registerBlueprintHandlers({
   // ─── IPC: Get all blueprints from SQLite (character_information.db) ────────
   // Used by the blueprint library / industry pages which read from CharDB
   // rather than the legacy JSON file.
-  ipcMain.handle('get-all-blueprints-from-db', async () => {
+  ipcHandle('get-all-blueprints-from-db', async () => {
     try {
       return await charInfoDb.getAllBlueprints();
     } catch (e) {

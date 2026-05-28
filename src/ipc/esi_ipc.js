@@ -1,4 +1,4 @@
-const { ipcMain } = require('electron');
+﻿const { ipcMain } = require('electron');
 
 const ESI_BASE      = 'https://esi.evetech.net';
 const FUZZWORK_BASE = 'https://www.fuzzwork.co.uk';
@@ -17,6 +17,7 @@ const FUZZWORK_BASE = 'https://www.fuzzwork.co.uk';
  * @param {function} deps.getSdeDb    - getter returning the live SDE SQLite db instance (or null)
  */
 function registerEsiHandlers({
+  ipcHandle,
   httpGet,
   httpPost,
   resolveNames,
@@ -28,19 +29,19 @@ function registerEsiHandlers({
 }) {
 
   // ─── IPC: Generic ESI proxy (unauthenticated) ─────────────────────────────
-  ipcMain.handle('esi-fetch', async (_, url) => {
+  ipcHandle('esi-fetch', async (_, url) => {
     return httpGet(url);
   });
 
   // ─── IPC: ESI type search ─────────────────────────────────────────────────
-  ipcMain.handle('esi-search', async (_, query) => {
+  ipcHandle('esi-search', async (_, query) => {
     return httpGet(
       `${ESI_BASE}/v2/search/?categories=inventory_type&search=${encodeURIComponent(query)}&strict=false&datasource=tranquility`
     );
   });
 
   // ─── IPC: ESI bulk name resolution ───────────────────────────────────────
-  ipcMain.handle('esi-names', async (_, ids) => {
+  ipcHandle('esi-names', async (_, ids) => {
     if (!ids || !ids.length) return [];
     const map = await resolveNames(ids);
     return ids.map(id => ({ id, name: map[id] || `Type ${id}` }));
@@ -50,7 +51,7 @@ function registerEsiHandlers({
   // Single public endpoint — no auth. Returns all tradeable items at once.
   // This is the same price source EVE uses for net worth calculations.
   // Cache aggressively: prices update ~daily.
-  ipcMain.handle('get-market-prices', async () => {
+  ipcHandle('get-market-prices', async () => {
     const cacheKey = 'market_prices_global';
     const cached   = readCache(cacheKey);
     if (cached) return cached;
@@ -77,20 +78,20 @@ function registerEsiHandlers({
   // ─── IPC: Location / structure resolution ────────────────────────────────
   // All three use getLocator(), not a bare locator, so the shared instance
   // with its persistent station cache is always used.
-  ipcMain.handle('get-structure-info', async (_, structureId, characterId) => {
+  ipcHandle('get-structure-info', async (_, structureId, characterId) => {
     return getLocator().resolveLocation(structureId, characterId);
   });
 
-  ipcMain.handle('resolve-location', async (_, locationId, characterId) => {
+  ipcHandle('resolve-location', async (_, locationId, characterId) => {
     return getLocator().resolveLocation(locationId, characterId);
   });
 
-  ipcMain.handle('resolve-system-names', async (_, systemIds) => {
+  ipcHandle('resolve-system-names', async (_, systemIds) => {
     return getLocator().resolveSystemNames(systemIds);
   });
 
   // ─── IPC: Jita market prices (Jita 4-4, station 60003760) ────────────────
-  ipcMain.handle('get-jita-prices', async (_, typeIds) => {
+  ipcHandle('get-jita-prices', async (_, typeIds) => {
     const JITA_STATION_ID = 60003760; // Jita IV - Moon 4 (Caldari Navy Assembly Plant)
     const REGION_FORGE    = 10000002;
     const prices          = {};
@@ -148,7 +149,7 @@ function registerEsiHandlers({
   });
 
   // ─── IPC: Fuzzwork blueprint materials ───────────────────────────────────
-  ipcMain.handle('get-blueprint-materials', async (_, typeId) => {
+  ipcHandle('get-blueprint-materials', async (_, typeId) => {
     if (bpCache[typeId]) return bpCache[typeId];
     try {
       const data = await httpGet(`${FUZZWORK_BASE}/api/blueprint.php?typeid=${typeId}&runs=1&me=0&pe=0`);
@@ -163,7 +164,7 @@ function registerEsiHandlers({
   });
 
   // ─── IPC: Find blueprint for a product (Fuzzwork) ────────────────────────
-  ipcMain.handle('find-bp-for-product', async (_, productTypeId) => {
+  ipcHandle('find-bp-for-product', async (_, productTypeId) => {
     const key = `prod_${productTypeId}`;
     if (bpCache[key]) return bpCache[key];
     try {
@@ -177,7 +178,7 @@ function registerEsiHandlers({
   });
 
   // ─── IPC: Get product typeId for a blueprint (SDE) ───────────────────────
-  ipcMain.handle('get-product-for-blueprint', async (_, blueprintTypeId) => {
+  ipcHandle('get-product-for-blueprint', async (_, blueprintTypeId) => {
     const sdeDb = getSdeDb(); if (!sdeDb) return null;
     try {
       const result = await getSdeDb().get(
@@ -201,7 +202,7 @@ function registerEsiHandlers({
   //   adjustedQty = max(1, ceil(baseQty × (1 − me/100)))
   //
   // Returns: { materials, productTypeId, productName, productQty } or null
-  ipcMain.handle('sde-blueprint-materials', async (_, blueprintTypeId, me = 0) => {
+  ipcHandle('sde-blueprint-materials', async (_, blueprintTypeId, me = 0) => {
     const sdeDb = getSdeDb(); if (!sdeDb) return null;
 
     const MANUFACTURING = 1; // activityID for manufacturing in SDE
@@ -328,7 +329,7 @@ function registerEsiHandlers({
   });
 
   // ─── IPC: SDE name lookup (best-effort fallback to local SDE sqlite) ──────
-  ipcMain.handle('sde-get-name', async (_, typeId) => {
+  ipcHandle('sde-get-name', async (_, typeId) => {
     const sdeDb = getSdeDb(); if (!sdeDb) return null;
     const tries = [
       { t: 'invTypes',    col: 'typeName', idcol: 'typeID' },

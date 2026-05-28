@@ -1,4 +1,4 @@
-const { ipcMain, BrowserWindow, shell } = require('electron');
+﻿const { ipcMain, BrowserWindow, shell } = require('electron');
 const crypto = require('crypto');
 
 // ─── SSO constants (duplicated from main for module self-containment) ─────────
@@ -52,6 +52,7 @@ const pendingAuth = {};
  * @param {object}   deps.callbackServerState - { server, start } — shared server ref
  */
 function registerAccountHandlers({
+  ipcHandle,
   loadDB,
   saveDB,
   charInfoDb,
@@ -61,7 +62,7 @@ function registerAccountHandlers({
 }) {
 
   // ─── IPC: Get accounts ──────────────────────────────────────────────────────
-  ipcMain.handle('get-accounts', () => {
+  ipcHandle('get-accounts', () => {
     const db = loadDB();
     return Object.values(db.accounts).map(a => ({
       characterId:   a.characterId,
@@ -71,7 +72,7 @@ function registerAccountHandlers({
   });
 
   // ─── IPC: Remove account ────────────────────────────────────────────────────
-  ipcMain.handle('remove-account', async (_, characterId) => {
+  ipcHandle('remove-account', async (_, characterId) => {
     const db = loadDB();
     delete db.accounts[characterId];
     delete db.blueprints[characterId];
@@ -83,7 +84,7 @@ function registerAccountHandlers({
   });
 
   // ─── IPC: Start SSO login ───────────────────────────────────────────────────
-  ipcMain.handle('start-sso-login', (event) => {
+  ipcHandle('start-sso-login', (event) => {
     // Ensure the local OAuth callback server is running
     callbackServerState.start();
 
