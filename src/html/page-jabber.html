@@ -1,4 +1,31 @@
 <!-- ── Jabber Page ────────────────────────────────────────────────────────── -->
+<style>
+  .ping-view-btn {
+    padding: 2px 10px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    background: rgba(192, 57, 43, 0.10);
+    border: 1px solid rgba(192, 57, 43, 0.30);
+    border-radius: var(--radius, 2px);
+    color: var(--accent, #c0392b);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    white-space: nowrap;
+  }
+  .ping-view-btn:hover {
+    background: rgba(192, 57, 43, 0.25);
+    border-color: var(--accent, #c0392b);
+    color: #fff;
+  }
+  .ping-view-btn--live,
+  .ping-view-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+</style>
 <div id="page-jabber" class="nav-page"
      style="flex-direction:column; height:100%;">
   <div class="page-header">
@@ -33,6 +60,7 @@
           <col style="min-width:80px;">               <!-- Pinged By -->
           <col style="min-width:60px;">               <!-- Target -->
           <col style="min-width:120px;">              <!-- Message -->
+          <col style="width:70px; min-width:70px;">   <!-- View -->
         </colgroup>
         <thead>
           <tr>
@@ -46,11 +74,12 @@
             <th>Pinged By</th>
             <th>Target</th>
             <th>Message</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td colspan="10" class="loading-row">
+            <td colspan="11" class="loading-row">
               Auto-connecting to Jabber; saved settings are used from the settings menu.
             </td>
           </tr>

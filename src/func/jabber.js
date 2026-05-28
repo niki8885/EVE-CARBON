@@ -98,7 +98,7 @@ function renderJabberTable() {
   const sorted = [...jabberMessages].sort((a, b) => jabberSortKey(b).localeCompare(jabberSortKey(a)));
 
   if (!sorted.length) {
-    tbody.innerHTML = `<tr><td colspan="10" class="loading-row">No messages received yet.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" class="loading-row">No messages received yet.</td></tr>`;
     updateJabberSummary(0);
     return;
   }
@@ -108,6 +108,11 @@ function renderJabberTable() {
     const docShort = row.doctrine
       ? row.doctrine.replace(/https?:\/\/\S+/g, '').trim().split(/\s+/).slice(0, 4).join(' ')
       : '';
+
+    // Only show View button if the row has a DB id (stored pings)
+    const viewBtn = row.id != null
+      ? `<button class="ping-view-btn" data-ping-id="${row.id}" title="Re-open ping alert">View</button>`
+      : `<button class="ping-view-btn ping-view-btn--live" disabled title="Live ping — not yet stored">View</button>`;
 
     return `<tr title="${escHtml(row.raw_body || '')}">
       <td style="font-family:var(--mono); font-size:11px; white-space:nowrap; min-width:140px;">${escHtml(row.eve_timecode || row.ping_timestamp || '')}</td>
@@ -121,10 +126,20 @@ function renderJabberTable() {
       <td style="white-space:normal; word-break:break-word;">${escHtml(row.target_sig    || '')}</td>
       <td style="white-space:normal; word-break:break-word;"
           title="${escHtml(row.hurf || '')}">${escHtml(row.hurf || row.raw_body || '')}</td>
+      <td style="text-align:center; white-space:nowrap;">${viewBtn}</td>
     </tr>`;
   }).join('');
 
   updateJabberSummary(sorted.length);
+
+  // Wire View buttons — delegate on tbody so it survives re-renders
+  tbody.querySelectorAll('.ping-view-btn[data-ping-id]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.pingId, 10);
+      if (!isNaN(id)) window.eveAPI.openPingAlert(id);
+    });
+  });
 }
 
 function updateJabberSummary(count) {

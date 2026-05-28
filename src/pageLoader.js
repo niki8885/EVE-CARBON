@@ -270,15 +270,16 @@ const PAGE_HTML = {
         <table id="jabberTable" class="asset-table ping-table" style="width:100%; table-layout:fixed;">
           <colgroup>
             <col style="width:140px;"/>
-            <col style="width:120px;"/>
             <col style="width:110px;"/>
-            <col style="width:90px;"/>
-            <col style="width:130px;"/>
-            <col style="width:90px;"/>
-            <col style="width:110px;"/>
-            <col style="width:110px;"/>
+            <col style="width:100px;"/>
             <col style="width:80px;"/>
+            <col style="width:120px;"/>
+            <col style="width:80px;"/>
+            <col style="width:100px;"/>
+            <col style="width:100px;"/>
+            <col style="width:75px;"/>
             <col style=""/>
+            <col style="width:70px;"/>
           </colgroup>
           <thead>
             <tr>
@@ -292,11 +293,12 @@ const PAGE_HTML = {
               <th>Pinged By</th>
               <th>Target</th>
               <th>Message</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td colspan="10" class="loading-row">Loading message history&#x2026;</td>
+              <td colspan="11" class="loading-row">Loading message history&#x2026;</td>
             </tr>
           </tbody>
         </table>
@@ -367,9 +369,15 @@ async function loadAllPages() {
 // Expose a promise so app.js can await window.__pagesReady uniformly.
 // loadAllPages is now async (fetches page-assets.html), so we await it here.
 window.__pagesReady = new Promise(resolve => {
+  const init = () => loadAllPages().then(() => {
+    // Wire jabber IPC listeners and kick off auto-connect once the DOM is ready.
+    if (typeof bindJabberEvents  === 'function') bindJabberEvents();
+    if (typeof autoConnectJabber === 'function') autoConnectJabber();
+    resolve();
+  });
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => { loadAllPages().then(resolve); }, { once: true });
+    document.addEventListener('DOMContentLoaded', init, { once: true });
   } else {
-    loadAllPages().then(resolve);
+    init();
   }
 });

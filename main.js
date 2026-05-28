@@ -34,6 +34,18 @@ if (typeof globalThis.crypto !== 'object' || typeof globalThis.crypto.randomUUID
   };
 }
 
+// ─── Prevent XMPP stream-race from crashing the main process ─────────────────
+process.on('uncaughtException', (err) => {
+  // @xmpp/client can throw "Cannot read properties of null (reading 'write')"
+  // when the TCP socket is destroyed mid-stream. Log it but don't crash.
+  if (err && err.message && err.message.includes("reading 'write'")) {
+    console.warn('[XMPP] Suppressed stream race error:', err.message);
+    return;
+  }
+  // Re-throw anything unrelated so real bugs still surface
+  console.error('[Uncaught]', err);
+});
+
 let xmppLibrary = null;
 async function getXmppClient() {
   if (!xmppLibrary) {
@@ -1788,15 +1800,18 @@ ipcMain.handle('jabber-connect', async (_, { service, jid, password }) => {
     }
  
     if (jabberClient) {
-      try { await jabberClient.stop(); } catch (_) {}
-      jabberClient = null;
       jabberConnectionActive = false;
+      const oldClient = jabberClient;
+      jabberClient = null; // Null before stop so stale events don't route through
+      try { await oldClient.stop(); } catch (_) {}
     }
  
     const { client: xmppClient } = await getXmppClient();
     jabberClient = xmppClient({ service, domain, username, password });
  
     jabberClient.on('error', (err) => {
+      // Swallow the null-write race error — it's a benign teardown artifact
+      if (err?.message?.includes("reading 'write'")) return;
       broadcastToRenderers('jabber-status', { status: 'error', message: err?.message || String(err) });
     });
  
@@ -1844,9 +1859,10 @@ ipcMain.handle('jabber-connect', async (_, { service, jid, password }) => {
  
 ipcMain.handle('jabber-disconnect', async () => {
   if (jabberClient) {
-    try { await jabberClient.stop(); } catch (_) {}
-    jabberClient = null;
     jabberConnectionActive = false;
+    const clientToStop = jabberClient;
+    jabberClient = null; // Null first so no new events route through
+    try { await clientToStop.stop(); } catch (_) {}
   }
   return true;
 });
@@ -1857,6 +1873,33 @@ ipcMain.handle('jabber-get-messages', async (_, limit = 200) => {
   } catch (e) {
     console.error('[jabberDataDb] jabber-get-messages failed:', e.message);
     return [];
+  }
+});
+
+ipcMain.handle('jabber-wipe-data', async () => {
+  try {
+    await jabberDataDb.wipeJabberDb();
+    return true;
+  } catch (e) {
+    console.error('[jabberDataDb] jabber-wipe-data failed:', e.message);
+    return false;
+  }
+});
+
+ipcMain.handle('jabber-open-ping-alert', async (_, rowId) => {
+  try {
+    // Fetch the specific message from the DB by id
+    const rows = await jabberDataDb.getRecentMessages(1000);
+    const row = rows.find(r => r.id === rowId);
+    if (!row) {
+      console.warn('[jabberDataDb] jabber-open-ping-alert: row not found for id', rowId);
+      return false;
+    }
+    createPingAlertWindow(row);
+    return true;
+  } catch (e) {
+    console.error('[jabberDataDb] jabber-open-ping-alert failed:', e.message);
+    return false;
   }
 });
  

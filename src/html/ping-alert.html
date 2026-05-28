@@ -713,13 +713,29 @@
     document.getElementById('dismissBtn').addEventListener('click', dismiss);
 
     // ── Receive data from main process ────────────────────────────────────────
-    // Populate with empty defaults immediately so the UI is never a blank panel.
-    // The real data arrives via the IPC event below and re-populates all fields.
-    populate({});
-
+    // Register the listener FIRST so we never miss the push from main.
+    // Then explicitly request the data via invoke — this handles the race where
+    // did-finish-load fires and main sends the data before this script executes.
     if (window.eveAPI && typeof window.eveAPI.on === 'function') {
       window.eveAPI.on('ping-alert-data', (msg) => populate(msg));
     }
+
+    // Pull data immediately in case the push already fired before we registered.
+    // Falls back gracefully to an empty populate if the invoke isn't available.
+    (async () => {
+      try {
+        if (window.eveAPI && typeof window.eveAPI.getPingAlertData === 'function') {
+          const msg = await window.eveAPI.getPingAlertData();
+          if (msg && (msg.raw_body || msg.body || msg.fc_name)) populate(msg);
+          else populate({});
+        } else {
+          // No pull API available — show placeholder until the push arrives.
+          populate({});
+        }
+      } catch (e) {
+        populate({});
+      }
+    })();
   </script>
 </body>
 </html>
