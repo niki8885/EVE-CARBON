@@ -371,8 +371,10 @@ async function loadAllPages() {
 window.__pagesReady = new Promise(resolve => {
   const init = () => loadAllPages().then(() => {
     // Wire jabber IPC listeners and kick off auto-connect once the DOM is ready.
-    if (typeof bindJabberEvents  === 'function') bindJabberEvents();
-    if (typeof autoConnectJabber === 'function') autoConnectJabber();
+    if (typeof bindJabberEvents   === 'function') bindJabberEvents();
+    if (typeof autoConnectJabber  === 'function') autoConnectJabber();
+    // Populate the jabber table from the persisted DB so history survives restarts.
+    if (typeof loadJabberHistory  === 'function') loadJabberHistory();
     resolve();
   });
   if (document.readyState === 'loading') {
