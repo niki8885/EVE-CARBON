@@ -73,9 +73,8 @@ function registerJabberHandlers({ jabberDataDb, createPingAlertWindow }) {
         const isDirector = /director/i.test(from) || /director/i.test(body);
         const msg        = { from, type, body, isDirector, raw: stanza.toString() };
 
-        // ── Persist to DB first, then broadcast the stored row (with its id) ──
-        // This guarantees the renderer always works from DB-backed data so that
-        // history loaded on restart matches what was shown live.
+        // ── Always persist every message to DB regardless of isDirector ──
+        // isDirector is stored as a column for filtering but never gates storage.
         let stored = null;
         try {
           stored = await jabberDataDb.insertJabberMessage(msg);
@@ -83,10 +82,10 @@ function registerJabberHandlers({ jabberDataDb, createPingAlertWindow }) {
           console.error('[jabberDataDb] failed to store message:', e.message);
         }
 
-        // Broadcast the enriched stored row if available, else the raw msg.
+        // Broadcast the enriched stored row (with DB id) to the jabber panel.
         broadcastToRenderers('jabber-message', stored || msg);
 
-        // Only open the ping-alert popup for director broadcasts.
+        // Open the ping-alert popup only for director broadcasts.
         if (isDirector) {
           createPingAlertWindow(stored || msg);
         }

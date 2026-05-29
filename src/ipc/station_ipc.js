@@ -61,13 +61,31 @@ function registerStationHandlers({
     }
   });
 
-  // ─── IPC: Upwell structures sync (placeholder) ────────────────────────────
-  // Currently a no-op that returns { upwell: 0 } so the UI button works
-  // without errors. Upwell structures are populated automatically as characters
-  // are synced (locator._persistToStationDb).
+  // ─── IPC: Upwell structures sync ─────────────────────────────────────────
+  // Upwell structures cannot be bulk-downloaded (ESI removed the public listing
+  // endpoint). This handler re-resolves any structures already in the local DB
+  // that are missing geo data, and reports how many rows currently exist.
+  // New structures are added automatically when characters are synced.
   ipcHandle('sync-upwell-database', async (_, opts = {}) => {
-    console.log('[UpwellSync] Manual trigger — structures are seeded automatically during character syncs.');
-    return { npc: 0, upwell: 0 };
+    try {
+      // Re-resolve incomplete rows by running the locator's station sync.
+      // Part 1 (NPC) will be fast since the TTL guard usually skips it;
+      // Part 2 re-resolves Upwell rows with missing geo — always runs.
+      const result = await getLocator().syncStationDatabase({ httpPost });
+
+      // Try to get a real count from the DB if the helper exists, otherwise
+      // fall back to what the locator reported.
+      let upwellCount = result.upwell || 0;
+      if (typeof charInfoDb.countUpwellStructures === 'function') {
+        upwellCount = await charInfoDb.countUpwellStructures().catch(() => upwellCount);
+      }
+
+      console.log(`[UpwellSync] Re-resolve complete. DB has ${upwellCount} Upwell structures.`);
+      return { npc: result.npc || 0, upwell: upwellCount };
+    } catch (e) {
+      console.error('[UpwellSync] Error:', e.message);
+      return { error: e.message };
+    }
   });
 }
 

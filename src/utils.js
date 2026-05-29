@@ -92,7 +92,8 @@ function logToConsole(message, type = 'info') {
       `<span class="log-time">[${timeString}]</span>` +
       `<span class="log-msg">${escHtml(String(message))}</span>`;
     // column-reverse means prepend = visually appears at bottom
-    consoleLog.insertBefore(entry, consoleLog.firstChild);
+    consoleLog.appendChild(entry);
+    consoleLog.scrollTop = consoleLog.scrollHeight;
 
     // Cap history at 200 entries to avoid memory growth
     while (consoleLog.children.length > 200) {

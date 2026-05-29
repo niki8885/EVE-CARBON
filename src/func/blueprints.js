@@ -335,40 +335,121 @@ async function openBlueprintDetail(bp) {
     <div id="bpComponentTree" style="display:none;margin-top:16px;"></div>`;
 
   // Full calculator button
-  document.getElementById('bpCalcBtn')?.addEventListener('click', async () => {
+  document.getElementById('bpCalcBtn')?.addEventListener('click', () => {
     if (typeof selectedBpTypeId !== 'undefined') selectedBpTypeId = bp.type_id;
     if (typeof selectedME      !== 'undefined') selectedME       = bp.me;
     if (typeof selectedTE      !== 'undefined') selectedTE       = bp.te;
-    showToast('Opening full calculator…', 'info');
-    if (typeof openMaterialsInTab === 'function') {
-      await openMaterialsInTab(bp.type_id);
-    } else {
-      navigateIndustryTab('calculator');
-    }
+    navigateIndustryTab('calculator');
   });
 
-  // Component tree toggle
+  // Component tree toggle — full redesign with tier depth + reaction controls
   document.getElementById('bpTreeBtn')?.addEventListener('click', async () => {
     const treeDiv = document.getElementById('bpComponentTree');
     if (!treeDiv) return;
     if (treeDiv.style.display !== 'none') {
       treeDiv.style.display = 'none';
+      document.getElementById('bpTreeBtn').textContent = '⬡ SHOW COMPONENT TREE';
       return;
     }
-    treeDiv.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--text-3);">
-      Building component tree…</div>`;
     treeDiv.style.display = 'block';
-    try {
-      const tree = await buildRecursiveMaterialTree(bp.type_id, 1);
-      treeDiv.innerHTML = `
-        <div style="font-family:var(--mono);font-size:10px;color:var(--text-3);
-                    letter-spacing:0.1em;margin-bottom:8px;">FULL MANUFACTURING CHAIN</div>
-        ${generateTreeHTML(tree)}`;
-    } catch (e) {
-      treeDiv.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--accent);">
-        Component tree unavailable: ${escHtml(e.message)}</div>`;
-    }
+    document.getElementById('bpTreeBtn').textContent = '⬡ HIDE COMPONENT TREE';
+    await renderComponentTreePanel(treeDiv, bp);
   });
+}
+
+// ─── Component Tree Panel ─────────────────────────────────────────────────────
+// Renders the full manufacturing breakdown with tier depth + reaction controls.
+// tierDepth: how many blueprint layers to recurse into before treating a node as
+//   a "buy this" leaf.  0 = only T0 raw (minerals/moon goo), 4 = stop at capital
+//   components, 99 = fully flatten everything.
+// includeReactions: if false, reaction products are treated as leaves (buy off market).
+
+async function renderComponentTreePanel(container, bp) {
+  container.innerHTML = `
+    <div id="ctrlBar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+         padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);
+         border-radius:4px;margin-bottom:12px;">
+      <span style="font-family:var(--mono);font-size:10px;color:var(--text-3);
+                   letter-spacing:0.08em;flex-shrink:0;">BREAK DOWN TO:</span>
+
+      <div style="display:flex;gap:4px;flex-wrap:wrap;" id="tierBtns">
+        <button class="tier-btn active" data-depth="1"
+                style="padding:3px 10px;border-radius:3px;border:1px solid var(--accent);
+                       background:var(--accent);color:#000;font-family:var(--mono);
+                       font-size:10px;cursor:pointer;font-weight:700;">
+          T1 Components
+        </button>
+        <button class="tier-btn" data-depth="2"
+                style="padding:3px 10px;border-radius:3px;border:1px solid var(--border);
+                       background:transparent;color:var(--text-2);font-family:var(--mono);
+                       font-size:10px;cursor:pointer;">
+          T2 Sub-Components
+        </button>
+        <button class="tier-btn" data-depth="99"
+                style="padding:3px 10px;border-radius:3px;border:1px solid var(--border);
+                       background:transparent;color:var(--text-2);font-family:var(--mono);
+                       font-size:10px;cursor:pointer;">
+          Raw (minerals / moon goo)
+        </button>
+      </div>
+
+      <label style="display:flex;align-items:center;gap:6px;font-family:var(--mono);
+                    font-size:10px;color:var(--text-2);margin-left:auto;cursor:pointer;">
+        <input type="checkbox" id="includeReactions" checked
+               style="accent-color:var(--accent);width:13px;height:13px;">
+        Include reaction items
+      </label>
+    </div>
+
+    <div id="treeOutput" style="font-family:var(--mono);font-size:11px;color:var(--text-3);
+         padding:12px;">Building component tree…</div>`;
+
+  // Wire tier buttons
+  let currentDepth    = 1;
+  let includeReactions = true;
+
+  const rebuild = async () => {
+    const out = document.getElementById('treeOutput');
+    if (!out) return;
+    out.innerHTML = `<div style="padding:12px;color:var(--text-3);">Building component tree…</div>`;
+    try {
+      // We need the blueprint ID for the root product.
+      // bp.type_id IS the blueprint ID (from the library), so use it directly as root.
+      const tree = await buildRecursiveMaterialTree(bp.type_id, 1, 0, currentDepth, includeReactions);
+      if (!tree || tree.length === 0) {
+        out.innerHTML = `<div style="padding:12px;color:var(--text-3);">
+          No sub-components found — all materials are raw inputs.</div>`;
+        return;
+      }
+      const flat = flattenTreeToLeaves(tree);
+      out.innerHTML = renderFlatMaterialList(flat, currentDepth);
+    } catch (e) {
+      out.innerHTML = `<div style="padding:12px;color:var(--danger);">
+        ⚠ Component tree error: ${escHtml(e.message)}</div>`;
+      console.error('[ComponentTree]', e);
+    }
+  };
+
+  container.querySelectorAll('.tier-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentDepth = parseInt(btn.dataset.depth);
+      container.querySelectorAll('.tier-btn').forEach(b => {
+        const active = b === btn;
+        b.style.background  = active ? 'var(--accent)' : 'transparent';
+        b.style.color       = active ? '#000'          : 'var(--text-2)';
+        b.style.border      = active ? '1px solid var(--accent)' : '1px solid var(--border)';
+        b.style.fontWeight  = active ? '700' : '400';
+      });
+      rebuild();
+    });
+  });
+
+  container.querySelector('#includeReactions')?.addEventListener('change', e => {
+    includeReactions = e.target.checked;
+    rebuild();
+  });
+
+  await rebuild();
 }
 
 // Renders a single material row with EVE icon + name + adjusted quantity
@@ -434,7 +515,8 @@ function applyMEBonus(baseQty, me) {
   return Math.max(1, Math.ceil(baseQty * factor));
 }
 
-// ─── Recursive component tree (unchanged; uses Fuzzwork) ─────────────────────
+// ─── Recursive component tree ─────────────────────────────────────────────────
+// blueprintTypeId : the blueprint (or reaction formula) type ID to expand
 
 async function getCachedBlueprintMaterials(typeId) {
   const key    = `bp_materials_${typeId}`;
@@ -445,33 +527,152 @@ async function getCachedBlueprintMaterials(typeId) {
   return data;
 }
 
-async function buildRecursiveMaterialTree(blueprintTypeId, quantityRequired = 1) {
+// quantityRequired: how many of the product we need
+// depth           : current recursion depth (starts at 0)
+// maxDepth        : stop recursing at this depth; treat node as a leaf (buy it)
+// includeReactions: if false, reaction products are treated as leaves
+
+// Known reaction activity IDs in the SDE / Fuzzwork schema.
+// Fuzzwork's findBpForProduct returns a `activityID` field on blueprintDetails.
+// Manufacturing = 1, Reactions = 11.
+const REACTION_ACTIVITY_ID = 11;
+
+async function buildRecursiveMaterialTree(
+  blueprintTypeId,
+  quantityRequired = 1,
+  depth            = 0,
+  maxDepth         = 1,
+  includeReactions = true
+) {
   const data = await getCachedBlueprintMaterials(blueprintTypeId);
-  if (!data)                   throw new Error(`No data returned for blueprint type ID ${blueprintTypeId}`);
+  if (!data)                   throw new Error(`No data for blueprint ${blueprintTypeId}`);
   if (!data.materials?.length) return [];
 
   const components = [];
   for (const mat of data.materials) {
     const totalQty = mat.quantity * quantityRequired;
-    let subTree = null;
-    try {
-      const subBpData = await window.eveAPI.findBpForProduct(mat.typeid);
-      if (subBpData?.[mat.typeid]?.blueprintDetails) {
-        const nextBpId = subBpData[mat.typeid].blueprintDetails.blueprintTypeID;
-        subTree = await buildRecursiveMaterialTree(nextBpId, totalQty);
-      }
-    } catch (e) { /* raw material — no sub-blueprint */ }
-    components.push({ typeid: mat.typeid, name: mat.name, quantity: totalQty, subTree });
+    let subTree      = null;
+    let isReaction   = false;
+
+    // Only try to recurse if we haven't hit the depth ceiling
+    if (depth < maxDepth) {
+      try {
+        const subBpData = await window.eveAPI.findBpForProduct(mat.typeid);
+        const entry     = subBpData?.[mat.typeid];
+        if (entry?.blueprintDetails) {
+          const activityId = entry.blueprintDetails.activityID ?? 1;
+          isReaction = (activityId === REACTION_ACTIVITY_ID);
+
+          // Recurse if: it's a manufacturing BP, or reactions are included
+          if (!isReaction || includeReactions) {
+            const nextBpId = entry.blueprintDetails.blueprintTypeID;
+            subTree = await buildRecursiveMaterialTree(
+              nextBpId, totalQty, depth + 1, maxDepth, includeReactions
+            );
+          }
+        }
+      } catch (e) { /* raw material — no sub-blueprint */ }
+    }
+
+    components.push({
+      typeid:     mat.typeid,
+      name:       mat.name || `Type ${mat.typeid}`,
+      quantity:   totalQty,
+      subTree,          // null = leaf (buy this); array = has sub-materials
+      isReaction,       // true = produced via reaction formula
+      depth,
+    });
   }
   return components;
 }
 
+// Flatten the tree into a deduplicated leaf-level shopping list.
+// Nodes with no subTree (or whose subTree is empty) are leaves = things to buy.
+function flattenTreeToLeaves(nodes, accumulated = new Map()) {
+  if (!nodes?.length) return accumulated;
+  for (const node of nodes) {
+    const hasChildren = node.subTree && node.subTree.length > 0;
+    if (!hasChildren) {
+      // Leaf — aggregate quantity
+      const existing = accumulated.get(node.typeid);
+      if (existing) {
+        existing.quantity += node.quantity;
+      } else {
+        accumulated.set(node.typeid, {
+          typeid:     node.typeid,
+          name:       node.name,
+          quantity:   node.quantity,
+          isReaction: node.isReaction,
+        });
+      }
+    } else {
+      // Intermediate node — recurse into children
+      flattenTreeToLeaves(node.subTree, accumulated);
+    }
+  }
+  return accumulated;
+}
+
+// Render the flat (aggregated) shopping list as a clean table
+function renderFlatMaterialList(flatMap, depth) {
+  if (!flatMap.size) return '<div style="padding:12px;color:var(--text-3);">No materials found.</div>';
+
+  const rows = [...flatMap.values()].sort((a, b) => a.name.localeCompare(b.name));
+
+  const depthLabel = depth === 99 ? 'Raw inputs (minerals / moon goo / PI)'
+                   : depth === 1  ? 'Capital components (T1 breakdown)'
+                   : depth === 2  ? 'Sub-components (T2 breakdown)'
+                   : `Tier ${depth} breakdown`;
+
+  return `
+    <div style="font-family:var(--mono);font-size:10px;color:var(--text-3);
+                letter-spacing:0.1em;margin-bottom:8px;padding:0 2px;">
+      ${escHtml(depthLabel)} — ${rows.length} item${rows.length !== 1 ? 's' : ''} to source
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border);">
+          <th style="text-align:left;padding:6px 8px;color:var(--text-3);font-weight:500;
+                     font-family:var(--mono);font-size:10px;letter-spacing:0.08em;">ITEM</th>
+          <th style="text-align:right;padding:6px 8px;color:var(--text-3);font-weight:500;
+                     font-family:var(--mono);font-size:10px;letter-spacing:0.08em;">QTY NEEDED</th>
+          <th style="text-align:center;padding:6px 8px;color:var(--text-3);font-weight:500;
+                     font-family:var(--mono);font-size:10px;letter-spacing:0.08em;">SOURCE</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(row => {
+          const sourceLabel = row.isReaction
+            ? `<span style="color:#ab7ab8;font-size:10px;">⚗ REACT</span>`
+            : `<span style="color:var(--text-3);font-size:10px;">◈ MANUF</span>`;
+          return `
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+              <td style="padding:7px 8px;display:flex;align-items:center;gap:8px;">
+                <img src="https://images.evetech.net/types/${row.typeid}/icon?size=32"
+                     onerror="this.onerror=null;this.style.display='none';"
+                     style="width:22px;height:22px;border-radius:3px;border:1px solid var(--border);flex-shrink:0;">
+                <span style="color:var(--text-1);">${escHtml(row.name)}</span>
+              </td>
+              <td style="padding:7px 8px;text-align:right;color:var(--text-1);
+                         font-family:var(--mono);font-weight:600;">
+                ${row.quantity.toLocaleString()}
+              </td>
+              <td style="padding:7px 8px;text-align:center;">
+                ${sourceLabel}
+              </td>
+            </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
+// Legacy tree HTML renderer (kept for renderTreeResults compatibility)
 function generateTreeHTML(treeNodes) {
   if (!treeNodes?.length) return '';
   return `
     <ul style="list-style:none;padding-left:20px;border-left:1px dashed var(--border);margin-top:8px;">
       ${treeNodes.map(node => {
-        const isComponent = node.subTree !== null;
+        const isComponent = node.subTree && node.subTree.length > 0;
         return `
           <li style="margin:8px 0;">
             <div style="display:flex;justify-content:space-between;align-items:center;

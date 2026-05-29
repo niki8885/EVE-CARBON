@@ -247,8 +247,8 @@ async function triggerUpwellSync() {
   if (progress) progress.style.display = 'block';
 
   const stages = [
-    { pct: 20, label: 'Downloading Upwell structure list from Hoboleaks SDE…', delay:     0 },
-    { pct: 85, label: 'Resolving system and region names via ESI…',             delay: 20000 },
+    { pct: 20, label: 'Checking local Upwell structure database…',      delay:     0 },
+    { pct: 85, label: 'Re-resolving structures with incomplete geo data…', delay:  5000 },
   ];
   const stageTimers = stages.map(s =>
     setTimeout(() => {
@@ -262,12 +262,19 @@ async function triggerUpwellSync() {
     const result = await window.eveAPI.syncUpwellDatabase({ force: true });
     stageTimers.forEach(clearTimeout);
 
-    if (result && !result.skipped) {
+    if (result && !result.error) {
       if (progBar) progBar.style.width = '100%';
-      if (progLbl) progLbl.textContent = `Done — ${result.upwell} Upwell structures synced.`;
-      if (status)  status.textContent  = '✓ Sync complete';
+      if (progLbl) progLbl.textContent = result.upwell > 0
+        ? `Done — ${result.upwell} Upwell structures in local database.`
+        : 'Re-resolve complete. Structures populate automatically as characters sync.';
+      if (status)  status.textContent  = '✓ Complete';
       if (lastEl)  lastEl.textContent  = 'Just now';
-      showToast(`Upwell sync complete: ${result.upwell} structures.`, 'success');
+      showToast(
+        result.upwell > 0
+          ? `Upwell sync: ${result.upwell} structures in local DB.`
+          : 'Upwell re-resolve complete. Structures seed automatically during character syncs.',
+        'success'
+      );
     } else {
       if (progBar) progBar.style.width = '100%';
       if (progLbl) progLbl.textContent = result?.error ? `Error: ${result.error}` : 'Already up to date.';
@@ -367,10 +374,10 @@ async function triggerStationSync() {
 
     if (result && !result.skipped) {
       if (progBar) progBar.style.width = '100%';
-      if (progLbl) progLbl.textContent = `Done — ${result.npc} NPC stations, ${result.upwell} Upwell structures synced.`;
+      if (progLbl) progLbl.textContent = `Done — ${result.npc} NPC stations synced.`;
       if (status)  status.textContent  = '✓ Sync complete';
       if (lastEl)  lastEl.textContent  = 'Just now';
-      showToast(`Station sync complete: ${result.npc} NPC + ${result.upwell} Upwell structures.`, 'success');
+      showToast(`Station sync complete: ${result.npc} NPC stations.`, 'success');
     } else {
       if (progBar) progBar.style.width = '100%';
       if (progLbl) progLbl.textContent = result?.error ? `Error: ${result.error}` : 'Already up to date.';

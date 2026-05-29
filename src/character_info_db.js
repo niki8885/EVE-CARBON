@@ -585,6 +585,29 @@ async function getCharacterBlueprints(characterId) {
   } catch (e) { return []; }
 }
 
+async function getAllBlueprints() {
+  if (!charDb) return [];
+  try {
+    const tables = await charDb.all(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'char_%_blueprints'`
+    );
+    const all = [];
+    for (const { name } of tables) {
+      const match = name.match(/^char_(\d+)_blueprints$/);
+      if (!match) continue;
+      const characterId = Number(match[1]);
+      try {
+        const rows = await charDb.all(`SELECT * FROM ${name} ORDER BY type_name ASC`);
+        rows.forEach(row => all.push({ ...row, characterId }));
+      } catch (_) {}
+    }
+    return all;
+  } catch (e) {
+    console.error('[CharDB] getAllBlueprints failed:', e.message);
+    return [];
+  }
+}
+
 // ── Wallet Journal ────────────────────────────────────────────────────────────
 // Replaces the stored journal entries with the freshly-fetched page of data.
 // ESI returns up to 2500 rows per page; we always fetch page 1 (most recent).
@@ -774,6 +797,7 @@ module.exports = {
   getCharacterAssets,
   getAssetSyncedAt,
   getCharacterBlueprints,
+  getAllBlueprints,
   removeCharacterData,
   getCharacterPIColonies,
   // ── Shared station / structure DB ──

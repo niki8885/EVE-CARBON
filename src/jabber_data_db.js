@@ -11,8 +11,12 @@ let jabberDb = null;
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
-async function initJabberDb(appDataDir) {
-  const dbPath = path.join(appDataDir, 'jabber_data.db');
+async function initJabberDb(appDataDir, userDataDir) {
+  // Jabber messages are user data that must survive app updates/reinstalls.
+  // Use userDataDir (app.getPath('userData')) when provided; fall back to
+  // appDataDir for backwards-compat with callers that only pass one arg.
+  const persistDir = userDataDir || appDataDir;
+  const dbPath = path.join(persistDir, 'jabber_data.db');
   jabberDb = await open({ filename: dbPath, driver: sqlite3.Database });
 
   await jabberDb.exec(`

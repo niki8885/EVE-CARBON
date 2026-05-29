@@ -205,7 +205,7 @@ app.whenReady().then(async () => {
     console.error('[charInfoDb] init failed, continuing:', e.message);
   }
   try {
-    await jabberDataDb.initJabberDb(appDataDir);
+    await jabberDataDb.initJabberDb(appDataDir, userDataPath);
   } catch (e) {
     console.error('[jabberDataDb] init failed, continuing:', e.message);
   }
@@ -399,9 +399,19 @@ async function getValidToken(characterId) {
 // Opens a frameless, always-on-top popup centred on the primary display
 // whenever a director-bot broadcast is received.
  
-let activePingAlertWin = null;  // only one alert at a time
- 
+let activePingAlertWin   = null;  // only one alert at a time
+let pendingPingAlertData = null;  // stored BEFORE window creation so the pull IPC can return it
+
+// IPC pull: renderer calls getPingAlertData() -> invoke('jabber-get-ping-alert-data')
+// Registered here so it is available as soon as createPingAlertWindow could be called.
+ipcHandle('jabber-get-ping-alert-data', () => pendingPingAlertData);
+
 function createPingAlertWindow(msg) {
+  // Store the payload BEFORE creating the window so that if the renderer's
+  // getPingAlertData() invoke resolves before did-finish-load fires the push,
+  // it still gets the correct data.
+  pendingPingAlertData = msg;
+
   // Close any existing alert before opening a new one
   if (activePingAlertWin && !activePingAlertWin.isDestroyed()) {
     activePingAlertWin.close();
@@ -439,9 +449,10 @@ function createPingAlertWindow(msg) {
  
   win.loadFile(path.join(__dirname, 'src', 'ping-alert.html'));
  
-  // Send the message payload once the renderer is ready
+  // Push the payload once the renderer is ready -- belt-and-suspenders alongside
+  // the pull (getPingAlertData invoke) the renderer script also performs.
   win.webContents.once('did-finish-load', () => {
-    win.webContents.send('ping-alert-data', msg);
+    win.webContents.send('ping-alert-data', pendingPingAlertData);
   });
  
   activePingAlertWin = win;
@@ -1177,6 +1188,121 @@ async function resolveNames(ids) {
   return Object.fromEntries(ids.map(id => [id, nameCache[id] || `Type ${id}`]));
 }
  
+// ─── SDE update helpers ───────────────────────────────────────────────────────
+const SDE_MD5_URL = 'https://www.fuzzwork.co.uk/dump/sqlite-latest.sqlite.bz2.md5';
+const SDE_BZ2_URL = 'https://www.fuzzwork.co.uk/dump/sqlite-latest.sqlite.bz2';
+
+function getSdeMd5Path() {
+  const devPath  = path.join(__dirname, 'data', 'sde.md5');
+  const prodPath = path.join(process.resourcesPath || __dirname, 'data', 'sde.md5');
+  return app.isPackaged ? prodPath : devPath;
+}
+
+async function fetchRemoteSdeMd5() {
+  return new Promise((resolve, reject) => {
+    https.request(SDE_MD5_URL, {
+      headers: { 'User-Agent': 'EVE-Carbon/1.0' }
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        if (res.statusCode >= 400) return reject(new Error(`HTTP ${res.statusCode}`));
+        // Format: "<hash>  filename" — grab just the hash
+        resolve(data.trim().split(/\s+/)[0]);
+      });
+    }).on('error', reject).end();
+  });
+}
+
+// sde-check-update → { upToDate, remoteMd5, localMd5 }
+ipcHandle('sde-check-update', async () => {
+  try {
+    const remoteMd5 = await fetchRemoteSdeMd5();
+    let localMd5 = null;
+    try { localMd5 = fs.readFileSync(getSdeMd5Path(), 'utf8').trim(); } catch { /* no local md5 yet */ }
+    return { upToDate: remoteMd5 === localMd5, remoteMd5, localMd5 };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+// sde-download-update — streams the bz2, decompresses, replaces sde.sql, saves md5
+// Sends 'sde-update-progress' push events: { stage, percent }
+ipcHandle('sde-download-update', async (event) => {
+  const sdePath  = getSdePath();
+  const md5Path  = getSdeMd5Path();
+  const win      = BrowserWindow.fromWebContents(event.sender);
+  const push     = (stage, percent) => {
+    if (win && !win.isDestroyed()) win.webContents.send('sde-update-progress', { stage, percent });
+  };
+
+  try {
+    push('Fetching version info…', 0);
+    const remoteMd5 = await fetchRemoteSdeMd5();
+
+    push('Downloading SDE…', 5);
+
+    // Ensure data directory exists
+    const dataDir = path.dirname(sdePath);
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+    // Download + decompress using Node's https (no axios at runtime)
+    await new Promise((resolve, reject) => {
+      const bz2 = require('unbzip2-stream');
+      const tmpPath = sdePath + '.tmp';
+      const writer  = fs.createWriteStream(tmpPath);
+
+      https.request(SDE_BZ2_URL, {
+        headers: { 'User-Agent': 'EVE-Carbon/1.0' }
+      }, (res) => {
+        if (res.statusCode >= 400) {
+          writer.destroy();
+          return reject(new Error(`HTTP ${res.statusCode}`));
+        }
+
+        const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
+        let downloaded   = 0;
+        let lastPct      = 5;
+
+        res.on('data', chunk => {
+          downloaded += chunk.length;
+          if (totalBytes > 0) {
+            const pct = Math.round(5 + (downloaded / totalBytes) * 85);
+            if (pct !== lastPct) { push('Downloading SDE…', pct); lastPct = pct; }
+          }
+        });
+
+        res.pipe(bz2()).pipe(writer);
+
+        writer.on('finish', () => {
+          // Atomically replace the live file
+          try { fs.renameSync(tmpPath, sdePath); } catch (e) {
+            fs.copyFileSync(tmpPath, sdePath);
+            try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+          }
+          resolve();
+        });
+        writer.on('error', (e) => { try { fs.unlinkSync(tmpPath); } catch { /* ignore */ } reject(e); });
+        res.on('error', reject);
+      }).on('error', reject).end();
+    });
+
+    push('Saving version info…', 92);
+    fs.writeFileSync(md5Path, remoteMd5, 'utf8');
+
+    push('Done', 100);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// sde-restart-app — relaunch so the new sde.sql is picked up by initSde()
+ipcHandle('sde-restart-app', () => {
+  app.relaunch();
+  app.exit(0);
+});
+
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 app.on('window-all-closed', () => {
   if (callbackServerState.server) callbackServerState.server.close();

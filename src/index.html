@@ -230,6 +230,40 @@
         <div class="panel" style="padding:16px; margin:0; background:var(--bg-panel); border:none; box-shadow:none;">
           <div class="settings-panel-block">
             <div class="settings-panel-title">Database</div>
+
+            <!-- ── SDE Update block ───────────────────────────────────── -->
+            <div style="display:flex; align-items:center; justify-content:space-between;
+                        gap:12px; flex-wrap:wrap; padding-bottom:16px;
+                        border-bottom:1px solid var(--border); margin-bottom:16px;">
+              <div>
+                <div style="font-size:11px; color:var(--text-3); letter-spacing:0.1em;
+                            font-family:var(--mono); margin-bottom:4px;">SDE — STATIC DATA EXPORT</div>
+                <div id="sdeVersionStatus"
+                     style="font-size:13px; color:var(--text-1); font-family:var(--mono);">Checking…</div>
+              </div>
+              <div style="display:flex; align-items:center; gap:10px; margin-left:auto;">
+                <div id="sdeUpdateStatus"
+                     style="font-size:12px; font-family:var(--mono); color:var(--text-3);
+                            min-width:160px; text-align:right;"></div>
+                <button id="sdeUpdateBtn" class="calc-btn"
+                        style="display:flex; align-items:center; gap:8px; white-space:nowrap;"
+                        onclick="triggerSdeUpdate()">
+                  <span id="sdeUpdateBtnIcon">⟳</span>
+                  UPDATE SDE DATA
+                </button>
+              </div>
+            </div>
+            <!-- SDE progress bar (hidden until download starts) -->
+            <div id="sdeUpdateProgressWrap" style="display:none; margin-bottom:16px;">
+              <div style="font-size:11px; color:var(--text-3); font-family:var(--mono);
+                          letter-spacing:0.08em; margin-bottom:6px;" id="sdeUpdateProgressLabel">Starting…</div>
+              <div style="height:4px; background:var(--bg-deep); border-radius:2px; overflow:hidden;">
+                <div id="sdeUpdateProgressBar"
+                     style="height:100%; width:0%; background:var(--accent);
+                            border-radius:2px; transition:width 0.4s ease;"></div>
+              </div>
+            </div>
+
             <!-- Warning banner -->
             <div id="dbSyncWarning" style="
                 display:flex; align-items:flex-start; gap:10px;
@@ -245,7 +279,9 @@
                   constellation, and region lookups via ESI.<br/>
                   <strong style="color:var(--text-1);">This process takes 5+ minutes</strong>
                   and runs in the background. You can continue using the app, but
-                  network activity will be elevated until it completes.
+                  network activity will be elevated until it completes.<br/>
+                  <strong style="color:var(--text-1);">Updating the SDE</strong> downloads a
+                  ~130 MB file and requires an app restart to take effect.
                 </div>
               </div>
             </div>
@@ -459,6 +495,29 @@
     <span class="console-label">▶ LOG</span>
     <span class="console-time"  id="console-time"></span>
     <span class="console-msg"   id="console-msg">[System] ESI connection ready...</span>
+    <span id="sdeStatusLight"
+          title="SDE: checking…"
+          style="
+            display:inline-block;
+            width:8px; height:8px;
+            border-radius:50%;
+            background:#555;
+            flex-shrink:0;
+            margin-right:6px;
+            margin-left:8px;
+            box-shadow:0 0 0 1px rgba(0,0,0,0.25);
+            transition:background 0.3s ease, box-shadow 0.3s ease;
+          "></span>
+    <span id="sdeStatusLabel"
+          style="
+            font-size:9px;
+            font-family:var(--mono);
+            letter-spacing:0.08em;
+            color:var(--text-7);
+            flex-shrink:0;
+            margin-right:8px;
+            transition:color 0.3s ease;
+          ">SDE</span>
     <button class="console-toggle" id="consoleToggleBtn" title="Expand/collapse console log">▲</button>
   </div>
   <div class="console-log" id="consoleLog"></div>
@@ -482,6 +541,135 @@
 <script src="./func/planetary-interaction.js"></script>
 <script src="./pageLoader.js"></script>  <!-- injects pages/*.html → #navPagesContainer -->
 <script src="./app.js"></script>         <!-- must be last -->
+
+<script>
+// ── SDE status light + update logic ─────────────────────────────────────────
+(function () {
+  const light  = document.getElementById('sdeStatusLight');
+  const label  = document.getElementById('sdeStatusLabel');
+
+  function setSdeLight(state) {
+    // state: 'checking' | 'ok' | 'outdated' | 'downloading' | 'error'
+    const styles = {
+      checking:    { bg: '#555',    shadow: 'none',                                   title: 'SDE: checking…',     text: 'SDE',           color: 'var(--text-7)' },
+      ok:          { bg: '#0084ff', shadow: '0 0 6px rgba(0,132,255,0.7)',            title: 'SDE: up to date',    text: 'SDE ✓',         color: '#0084ff' },
+      outdated:    { bg: '#d0263d', shadow: '0 0 6px rgba(208,38,61,0.8)',            title: 'SDE: update available — open Settings > Database', text: 'SDE !', color: 'var(--danger)' },
+      downloading: { bg: '#e67e22', shadow: '0 0 6px rgba(230,126,34,0.7)',           title: 'SDE: downloading…',  text: 'SDE…',          color: 'var(--warning)' },
+      error:       { bg: '#555',    shadow: 'none',                                   title: 'SDE: check failed',  text: 'SDE ?',         color: 'var(--text-7)' },
+    };
+    const s = styles[state] || styles.checking;
+    if (light) { light.style.background = s.bg; light.style.boxShadow = s.shadow; light.title = s.title; }
+    if (label) { label.textContent = s.text; label.style.color = s.color; }
+  }
+
+  // Run the check shortly after startup so it doesn't block rendering
+  setTimeout(async () => {
+    setSdeLight('checking');
+    try {
+      const result = await window.eveAPI.sdeCheckUpdate();
+      if (result.error) { setSdeLight('error'); return; }
+      setSdeLight(result.upToDate ? 'ok' : 'outdated');
+      // Also populate the settings panel label when it opens
+      updateSdeSettingsLabel(result);
+    } catch { setSdeLight('error'); }
+  }, 2000);
+
+  // ── Settings panel helpers ─────────────────────────────────────────────────
+  let _lastSdeResult = null;
+
+  function updateSdeSettingsLabel(result) {
+    _lastSdeResult = result;
+    const el = document.getElementById('sdeVersionStatus');
+    const statusEl = document.getElementById('sdeUpdateStatus');
+    if (!el) return;
+    if (result.error) {
+      el.textContent = 'Could not check version';
+      el.style.color = 'var(--text-3)';
+      if (statusEl) { statusEl.textContent = ''; }
+      return;
+    }
+    if (result.upToDate) {
+      el.textContent = 'Up to date';
+      el.style.color = 'var(--success)';
+      if (statusEl) { statusEl.textContent = result.remoteMd5 ? result.remoteMd5.slice(0, 12) + '…' : ''; }
+    } else {
+      el.textContent = 'Update available';
+      el.style.color = 'var(--danger)';
+      if (statusEl) { statusEl.textContent = 'New version detected'; }
+    }
+  }
+
+  // Re-check & populate the settings panel every time the Database tab is shown
+  const dbTabBtn = document.querySelector('[data-settings-tab="database"]');
+  if (dbTabBtn) {
+    dbTabBtn.addEventListener('click', async () => {
+      const el = document.getElementById('sdeVersionStatus');
+      if (el) { el.textContent = 'Checking…'; el.style.color = 'var(--text-1)'; }
+      try {
+        const result = await window.eveAPI.sdeCheckUpdate();
+        updateSdeSettingsLabel(result);
+        setSdeLight(result.error ? 'error' : result.upToDate ? 'ok' : 'outdated');
+      } catch { /* leave as-is */ }
+    });
+  }
+
+  // ── triggerSdeUpdate ───────────────────────────────────────────────────────
+  window.triggerSdeUpdate = async function () {
+    const btn         = document.getElementById('sdeUpdateBtn');
+    const btnIcon     = document.getElementById('sdeUpdateBtnIcon');
+    const progressWrap = document.getElementById('sdeUpdateProgressWrap');
+    const progressBar  = document.getElementById('sdeUpdateProgressBar');
+    const progressLbl  = document.getElementById('sdeUpdateProgressLabel');
+    const statusEl     = document.getElementById('sdeUpdateStatus');
+    const versionEl    = document.getElementById('sdeVersionStatus');
+
+    // Disable the button and show the progress bar
+    if (btn) { btn.disabled = true; }
+    if (btnIcon) { btnIcon.textContent = '…'; }
+    if (progressWrap) { progressWrap.style.display = 'block'; }
+    if (statusEl) { statusEl.textContent = 'Downloading…'; }
+    setSdeLight('downloading');
+
+    // Listen for streaming progress updates from main process
+    const onProgress = ({ stage, percent }) => {
+      if (progressLbl) progressLbl.textContent = stage;
+      if (progressBar) progressBar.style.width = percent + '%';
+    };
+    window.eveAPI.on('sde-update-progress', onProgress);
+
+    try {
+      const result = await window.eveAPI.sdeDownloadUpdate();
+
+      if (result && result.success) {
+        if (progressLbl) progressLbl.textContent = 'Download complete — restarting…';
+        if (progressBar) progressBar.style.width = '100%';
+        if (statusEl)    statusEl.textContent = 'Restarting…';
+        if (versionEl)   { versionEl.textContent = 'Restarting app…'; versionEl.style.color = 'var(--success)'; }
+        setSdeLight('ok');
+        // Brief pause so the user sees 100% before the app restarts
+        setTimeout(() => window.eveAPI.sdeRestartApp(), 1200);
+      } else {
+        const msg = (result && result.error) ? result.error : 'Unknown error';
+        if (progressLbl) progressLbl.textContent = `Error: ${msg}`;
+        if (progressBar) progressBar.style.background = 'var(--danger)';
+        if (statusEl)    statusEl.textContent = 'Update failed';
+        if (versionEl)   { versionEl.textContent = 'Download failed'; versionEl.style.color = 'var(--danger)'; }
+        setSdeLight('error');
+        if (btn) { btn.disabled = false; }
+        if (btnIcon) { btnIcon.textContent = '⟳'; }
+      }
+    } catch (e) {
+      if (progressLbl) progressLbl.textContent = `Error: ${e.message}`;
+      if (progressBar) progressBar.style.background = 'var(--danger)';
+      setSdeLight('error');
+      if (btn) { btn.disabled = false; }
+      if (btnIcon) { btnIcon.textContent = '⟳'; }
+    } finally {
+      window.eveAPI.off('sde-update-progress', onProgress);
+    }
+  };
+})();
+</script>
 
 </body>
 </html>

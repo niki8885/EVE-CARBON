@@ -90,17 +90,6 @@ function registerBlueprintHandlers({
     return all;
   });
 
-  // ─── IPC: Get all blueprints from SQLite (character_information.db) ────────
-  // Used by the blueprint library / industry pages which read from CharDB
-  // rather than the legacy JSON file.
-  ipcHandle('get-all-blueprints-from-db', async () => {
-    try {
-      return await charInfoDb.getAllBlueprints();
-    } catch (e) {
-      console.warn('[blueprint_ipc] get-all-blueprints-from-db failed:', e.message);
-      return [];
-    }
-  });
 }
 
 module.exports = { registerBlueprintHandlers };

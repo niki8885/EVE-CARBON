@@ -67,6 +67,11 @@ contextBridge.exposeInMainWorld('eveAPI', {
   // SDE
   sdeGetName: (id) => ipcRenderer.invoke('sde-get-name', id),
 
+  // SDE update (runtime check + download + restart)
+  sdeCheckUpdate:   ()   => ipcRenderer.invoke('sde-check-update'),
+  sdeDownloadUpdate: ()  => ipcRenderer.invoke('sde-download-update'),
+  sdeRestartApp:    ()   => ipcRenderer.invoke('sde-restart-app'),
+
   // Persistent user data cache
   cacheGet: (key)              => ipcRenderer.invoke('cache-get', key),
   cacheSet: (key, value, days) => ipcRenderer.invoke('cache-set', key, value, days),
@@ -108,6 +113,7 @@ contextBridge.exposeInMainWorld('eveAPI', {
       'jabber-message',
       'ping-file-updated',
       'ping-alert-data',
+      'sde-update-progress',
     ];
     if (allowed.includes(channel)) {
       ipcRenderer.on(channel, (_, ...args) => fn(...args));
