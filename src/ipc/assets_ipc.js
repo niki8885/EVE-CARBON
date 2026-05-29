@@ -24,6 +24,7 @@ function registerAssetHandlers({
   ipcHandle,
   getValidToken,
   httpGet,
+  httpGetFull,
   resolveNames,
   getLocator,
   loadDB,
@@ -37,15 +38,18 @@ function registerAssetHandlers({
   // ─── Internal: full asset fetch + resolve + persist ──────────────────────
   async function syncAssetsInternal(characterId) {
     const token = await getValidToken(characterId);
+    const authHdr = { Authorization: `Bearer ${token}` };
     let allAssets = [];
     let page = 1;
+    let totalPages = 1;
     while (true) {
-      const data = await httpGet(
+      const { data, xPages } = await httpGetFull(
         `${ESI_BASE}/v3/characters/${characterId}/assets/?page=${page}&datasource=tranquility`,
-        { Authorization: `Bearer ${token}` }
+        authHdr
       );
+      if (page === 1) totalPages = xPages || 1;
       allAssets = allAssets.concat(data);
-      if (!data || data.length < 1000) break;
+      if (page >= totalPages || !data || data.length < 1000) break;
       page++;
     }
 

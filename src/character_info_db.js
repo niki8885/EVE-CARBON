@@ -378,12 +378,12 @@ async function replaceAssets(characterId, assets) {
   const db  = charDb;
   const now = Date.now();
   const p   = `char_${characterId}`;
-  await db.run(`DELETE FROM ${p}_assets`);
-  // Insert in batches of 500
-  for (let i = 0; i < assets.length; i += 500) {
-    const batch = assets.slice(i, i + 500);
-    await db.run('BEGIN');
-    for (const a of batch) {
+  // Wrap DELETE + all INSERTs in one transaction so a concurrent dashboard read
+  // never sees a partially-replaced table (which would make regions appear missing).
+  await db.run('BEGIN');
+  try {
+    await db.run(`DELETE FROM ${p}_assets`);
+    for (const a of assets) {
       await db.run(
         `INSERT OR REPLACE INTO ${p}_assets
            (item_id, type_id, type_name, location_id, location_name,
@@ -405,6 +405,9 @@ async function replaceAssets(characterId, assets) {
       );
     }
     await db.run('COMMIT');
+  } catch (e) {
+    await db.run('ROLLBACK').catch(() => {});
+    throw e;
   }
 }
 

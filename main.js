@@ -253,6 +253,7 @@ app.whenReady().then(async () => {
     ipcHandle,
     getValidToken,
     httpGet,
+    httpGetFull,
     resolveNames,
     getLocator,
     loadDB,
@@ -337,6 +338,39 @@ function httpGet(url, headers = {}) {
   });
 }
  
+// Like httpGet but also returns the ESI X-Pages header.
+// Use this for paginated ESI endpoints so we never stop early.
+// Returns: { data: parsedBody, xPages: number }
+function httpGetFull(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, {
+      headers: { 'User-Agent': 'EVE-BPC-Calculator/2.0', 'Accept': 'application/json', ...headers }
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        if (res.statusCode === 429) {
+          const retryAfter = parseInt(res.headers['retry-after'] || '60', 10);
+          return reject(Object.assign(
+            new Error(`HTTP 429: ${url}`),
+            { retryAfter, isRateLimit: true }
+          ));
+        }
+        if (res.statusCode >= 400) return reject(new Error(`HTTP ${res.statusCode}: ${url}`));
+        try {
+          resolve({
+            data:   JSON.parse(data),
+            xPages: parseInt(res.headers['x-pages'] || '1', 10),
+          });
+        } catch { reject(new Error('JSON parse error')); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(20000, () => { req.destroy(); reject(new Error('Timeout')); });
+    req.end();
+  });
+}
+
 function httpPost(url, body, headers = {}, formEncoded = false) {
   return new Promise((resolve, reject) => {
     const postData = formEncoded ? body : JSON.stringify(body);
@@ -456,7 +490,7 @@ function createPingAlertWindow(msg) {
   // other applications, not just other Electron windows.
   win.setAlwaysOnTop(true, 'screen-saver');
  
-  win.loadFile(path.join(__dirname, 'src', 'ping-alert.html'));
+  win.loadFile(path.join(__dirname, 'src', 'html', 'ping-alert.html'));
  
   // Push the payload once the renderer is ready -- belt-and-suspenders alongside
   // the pull (getPingAlertData invoke) the renderer script also performs.
@@ -707,13 +741,18 @@ async function fullCharacterSync(characterId, characterName, progressCb) {
     report('assets', 'Fetching assets (paginated)…');
     let allAssets = [];
     let page = 1;
+    let totalPages = 1;
     while (true) {
-      const data = await httpGet(
+      const { data, xPages } = await httpGetFull(
         `${ESI_BASE}/v3/characters/${characterId}/assets/?page=${page}&datasource=tranquility`, authHdr
       );
+      if (page === 1) {
+        totalPages = xPages || 1;
+        report('assets', `  ESI reports ${totalPages} page(s)`);
+      }
       allAssets = allAssets.concat(data);
-      report('assets', `  page ${page}: ${allAssets.length} items so far…`);
-      if (!data || data.length < 1000) break;
+      report('assets', `  page ${page}/${totalPages}: ${allAssets.length} items so far…`);
+      if (page >= totalPages || !data || data.length < 1000) break;
       page++;
     }
     const typeIds = [...new Set(allAssets.map(a => a.type_id).filter(Boolean))];
@@ -786,13 +825,15 @@ async function fullCharacterSync(characterId, characterName, progressCb) {
     report('blueprints', 'Fetching blueprints (paginated)…');
     let allBPs = [];
     let page = 1;
+    let totalBPPages = 1;
     while (true) {
-      const data = await httpGet(
+      const { data, xPages } = await httpGetFull(
         `${ESI_BASE}/v3/characters/${characterId}/blueprints/?page=${page}&datasource=tranquility`, authHdr
       );
+      if (page === 1) totalBPPages = xPages || 1;
       allBPs = allBPs.concat(data);
-      report('blueprints', `  page ${page}: ${allBPs.length} blueprints so far…`);
-      if (data.length < 1000) break;
+      report('blueprints', `  page ${page}/${totalBPPages}: ${allBPs.length} blueprints so far…`);
+      if (page >= totalBPPages || data.length < 1000) break;
       page++;
     }
     const typeIds = [...new Set(allBPs.map(b => b.type_id))];
@@ -1036,12 +1077,13 @@ async function coreCharacterSync(characterId, characterName, progressCb) {
   // 7. Blueprints (full paginated) — kept in core; small payload, fast
   try {
     report('blueprints', 'Fetching blueprints…');
-    let allBPs = [], page = 1;
+    let allBPs = [], page = 1, totalBPPages = 1;
     while (true) {
-      const data = await httpGet(`${ESI_BASE}/v3/characters/${characterId}/blueprints/?page=${page}&datasource=tranquility`, authHdr);
+      const { data, xPages } = await httpGetFull(`${ESI_BASE}/v3/characters/${characterId}/blueprints/?page=${page}&datasource=tranquility`, authHdr);
+      if (page === 1) totalBPPages = xPages || 1;
       allBPs = allBPs.concat(data);
-      report('blueprints', `  page ${page}: ${allBPs.length} blueprints…`);
-      if (data.length < 1000) break;
+      report('blueprints', `  page ${page}/${totalBPPages}: ${allBPs.length} blueprints…`);
+      if (page >= totalBPPages || data.length < 1000) break;
       page++;
     }
     const typeIds = [...new Set(allBPs.map(b => b.type_id))];

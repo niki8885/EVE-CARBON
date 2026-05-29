@@ -238,10 +238,13 @@ async function autoConnectJabber() {
 // ── Event binding ─────────────────────────────────────────────────────────────
 
 function bindJabberEvents() {
-  // Live messages from main process
-  window.eveAPI.on('jabber-message', (msg) => {
-    const row = jabberLiveToRow(msg);
-    jabberMessages.unshift(row);   // prepend so newest is index 0
+  // Live messages from main process.
+  // When the DB insert succeeds, the broadcast is a complete DB row (has
+  // raw_body). When it fails, the broadcast is the raw XMPP msg (has body).
+  // Handle both so cells always show content regardless of DB state.
+  window.eveAPI.on('jabber-message', (payload) => {
+    const row = ('raw_body' in payload) ? payload : jabberLiveToRow(payload);
+    jabberMessages.unshift(row);
     renderJabberTable();
   });
 

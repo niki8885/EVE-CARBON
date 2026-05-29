@@ -163,26 +163,31 @@ async function insertJabberMessage(msg) {
     return null;
   }
 
-  const parsed = parseJabberMessage(msg.body || '');
+  const parsed     = parseJabberMessage(msg.body || '');
+  const received_at = new Date().toISOString();
 
-  const row = {
-    received_at:     new Date().toISOString(),
-    from_jid:        msg.from        || '',
-    msg_type:        msg.type        || '',
-    is_director:     msg.isDirector  ? 1 : 0,
-    raw_body:        msg.body        || '',
-    ping_timestamp:  parsed.ping_timestamp,
-    who_pinged:      parsed.who_pinged,
-    hurf:            parsed.hurf,
-    fc_name:         parsed.fc_name,
-    formup_location: parsed.formup_location,
-    pap_type:        parsed.pap_type,
-    comms:           parsed.comms,
-    doctrine:        parsed.doctrine,
-    sig:             parsed.sig,
-    gsol_member:     parsed.gsol_member,
-    target_sig:      parsed.target_sig,
-    eve_timecode:    parsed.eve_timecode,
+  // node-sqlite3 named parameters require keys to include the ':' prefix.
+  // Keys without it silently resolve to index 0 → SQLITE_RANGE error.
+  // We keep a separate clean object (no prefix) for the return value so
+  // callers (the IPC broadcast, ping-alert popup) get normal field names.
+  const bindParams = {
+    ':received_at':     received_at,
+    ':from_jid':        msg.from        || '',
+    ':msg_type':        msg.type        || '',
+    ':is_director':     msg.isDirector  ? 1 : 0,
+    ':raw_body':        msg.body        || '',
+    ':ping_timestamp':  parsed.ping_timestamp,
+    ':who_pinged':      parsed.who_pinged,
+    ':hurf':            parsed.hurf,
+    ':fc_name':         parsed.fc_name,
+    ':formup_location': parsed.formup_location,
+    ':pap_type':        parsed.pap_type,
+    ':comms':           parsed.comms,
+    ':doctrine':        parsed.doctrine,
+    ':sig':             parsed.sig,
+    ':gsol_member':     parsed.gsol_member,
+    ':target_sig':      parsed.target_sig,
+    ':eve_timecode':    parsed.eve_timecode,
   };
 
   try {
@@ -198,10 +203,32 @@ async function insertJabberMessage(msg) {
         :fc_name, :formup_location, :pap_type, :comms, :doctrine,
         :sig, :gsol_member, :target_sig, :eve_timecode
       )
-    `, row);
+    `, bindParams);
 
-    console.log(`[JabberDb] stored message id=${result.lastID} from=${row.from_jid} sig=${row.sig || 'n/a'}`);
-    return { ...row, id: result.lastID };
+    console.log(`[JabberDb] stored message id=${result.lastID} from=${bindParams[':from_jid']} sig=${bindParams[':sig'] || 'n/a'}`);
+
+    // Return a clean row with normal (un-prefixed) field names so IPC
+    // broadcasts and the ping-alert popup can read fields by their plain names.
+    return {
+      id:              result.lastID,
+      received_at,
+      from_jid:        bindParams[':from_jid'],
+      msg_type:        bindParams[':msg_type'],
+      is_director:     bindParams[':is_director'],
+      raw_body:        bindParams[':raw_body'],
+      ping_timestamp:  parsed.ping_timestamp,
+      who_pinged:      parsed.who_pinged,
+      hurf:            parsed.hurf,
+      fc_name:         parsed.fc_name,
+      formup_location: parsed.formup_location,
+      pap_type:        parsed.pap_type,
+      comms:           parsed.comms,
+      doctrine:        parsed.doctrine,
+      sig:             parsed.sig,
+      gsol_member:     parsed.gsol_member,
+      target_sig:      parsed.target_sig,
+      eve_timecode:    parsed.eve_timecode,
+    };
   } catch (e) {
     console.error('[JabberDb] insert failed:', e.message);
     return null;
