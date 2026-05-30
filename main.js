@@ -531,8 +531,8 @@ function createWindow() {
     }
   });
  
-  // ADD THIS — remove once issue is resolved
-  win.webContents.openDevTools();
+  // DEVELOPER PANEL 
+  //win.webContents.openDevTools();
  
   const url = require('url');
   win.loadURL(url.format({
