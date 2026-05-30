@@ -52,7 +52,9 @@ contextBridge.exposeInMainWorld('eveAPI', {
   getJitaPrices:         (typeIds) => ipcRenderer.invoke('get-jita-prices', typeIds),
 
   // Jobs
-  getCharacterJobs: (characterId) => ipcRenderer.invoke('get-character-jobs', characterId),
+  getCharacterJobs:       (characterId) => ipcRenderer.invoke('get-character-jobs', characterId),
+  getCharacterActiveJobs:    (characterId)             => ipcRenderer.invoke('get-character-active-jobs', characterId),
+  setAutopilotDestination:   (characterId, systemId)   => ipcRenderer.invoke('set-autopilot-destination', { characterId, systemId }),
 
   // Assets
   syncAssets:    (charId) => ipcRenderer.invoke('sync-assets', charId),

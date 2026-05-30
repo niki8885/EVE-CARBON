@@ -1,9 +1,17 @@
-const { app, BrowserWindow, ipcMain, shell, screen } = require('electron');
-const path = require('path');
+// ── Load .env FIRST — before any IPC modules that read process.env at load time ──
+const path   = require('path');
+const { app } = require('electron');
+const envPath = app.isPackaged
+  ? path.join(process.resourcesPath, '.env')
+  : path.join(__dirname, '.env');
+require('dotenv').config({ path: envPath });
+
+// ── Now safe to require everything else ────────────────────────────────────────
+const { BrowserWindow, ipcMain, shell, screen } = require('electron');
 const https = require('https');
-const http = require('http');
+const http  = require('http');
 const crypto = require('crypto');
-const fs = require('fs');
+const fs    = require('fs');
 const createLocator           = require('./src/locator');
 const charInfoDb              = require('./src/character_info_db');
 const jabberDataDb            = require('./src/jabber_data_db');
@@ -16,13 +24,7 @@ const { registerStationHandlers }   = require('./src/ipc/station_ipc');
 const { registerConfigHandlers }    = require('./src/ipc/config_ipc');
 const { registerPingFileHandlers }  = require('./src/ipc/ping_ipc');
 const { registerPIHandlers, syncPIForCharacter } = require('./src/ipc/pi_ipc');
-const { registerMapHandlers }  = require('./src/ipc/map_ipc');
-
-// Load environment variables from .env file in both development and production.
-const envPath = app.isPackaged
-  ? path.join(process.resourcesPath, '.env')
-  : path.join(__dirname, '.env');
-require('dotenv').config({ path: envPath });
+const { registerMapHandlers }       = require('./src/ipc/map_ipc');
 
 // Global reference to the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -87,8 +89,7 @@ const SCOPES         = [
   'esi-skills.read_skills.v1',                  // total skill points 
   'esi-skills.read_skillqueue.v1',              // current skill queue (for estimating free time until next SP gain) 
   'esi-fleets.read_fleet.v1',                    // for fleet role tags in Jabber messages (e.g. FC, squad commander, etc.)
-
-
+  'esi-ui.write_waypoint.v1',                    // set autopilot destination in active EVE client
 ].join(' ');
 // ─── Local DB ────────────────────────────────────────────────────────────────────
  
@@ -487,6 +488,7 @@ function createPingAlertWindow(msg) {
     frame:           false,
     transparent:     false,
     backgroundColor: '#070b14',
+    icon:            path.join(__dirname, 'assets', 'icon.ico'),
     webPreferences: {
       preload:          path.join(__dirname, 'src', 'preload.js'),
       contextIsolation: true,
@@ -521,6 +523,7 @@ function createWindow() {
     backgroundColor: '#070b14',
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#070b14', symbolColor: '#ab7ab8', height: 32 },
+    icon: path.join(__dirname, 'assets', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'src', 'preload.js'),
       contextIsolation: true,

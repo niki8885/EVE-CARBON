@@ -152,7 +152,6 @@ function renderDashboardPing(ping) {
 
 async function loadDashboard() {
   const summaryPanel   = document.getElementById('dashboardNetworthSummary');
-  const jobsTable      = document.getElementById('dashboardJobsTable');
   const welcomeBanner  = document.getElementById('dashboardWelcomeBanner');
   const mainCharLabel  = document.getElementById('dashboardMainCharName');
 
@@ -168,7 +167,6 @@ async function loadDashboard() {
   const accounts = await window.eveAPI.getAccounts().catch(() => []);
   if (!accounts.length) {
     if (summaryPanel) summaryPanel.innerHTML = '<div class="dashboard-empty">Add a character to see your dashboard.</div>';
-    if (jobsTable)    jobsTable.innerHTML    = '<div class="dashboard-empty">No characters added.</div>';
     return;
   }
 
@@ -605,140 +603,25 @@ async function loadDashboard() {
     } catch (e) { console.warn('Net worth calculation failed:', e.message); }
   })();
 
-  // ── Section 3: Jobs table — serialised to avoid 429s ─────────────────────
+  // ── Section 3: Active jobs widget ───────────────────────────────────────
   (async () => {
-    if (jobsTable) jobsTable.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-3);font-family:var(--mono);font-size:11px;">Loading jobs...</div>`;
+    const container = document.getElementById('dashboardActiveJobsTable');
+    if (!container) return;
     try {
-      // Fetch jobs one character at a time; short pause between each to stay
-      // well under ESI's per-second rate limit.
-      // ESI /characters/{id}/industry/jobs/ omits character_id — stamp it now.
-      const tag = (accId, list) => (list || []).map(j => ({ ...j, character_id: accId }));
-      const jobResponses = [];
+      const tag = (id, list) => (list || []).map(j => ({ ...j, character_id: id }));
+      const responses = [];
       for (const acc of accounts) {
         try {
-          const jobs = await window.eveAPI.getCharacterJobs(acc.characterId);
-          jobResponses.push(tag(acc.characterId, jobs));
-        } catch (e) {
-          if (e?.message?.includes('429')) {
-            await new Promise(r => setTimeout(r, 12000));
-            try { jobResponses.push(tag(acc.characterId, await window.eveAPI.getCharacterJobs(acc.characterId))); }
-            catch (_) { jobResponses.push([]); }
-          } else {
-            jobResponses.push([]);
-          }
-        }
-        // Small breathing room between characters (100 ms)
-        await new Promise(r => setTimeout(r, 100));
+          responses.push(tag(acc.characterId, await window.eveAPI.getCharacterActiveJobs(acc.characterId)));
+        } catch { responses.push([]); }
+        await new Promise(r => setTimeout(r, 80));
       }
-      const jobs = jobResponses.flat();
-      const accountMap = Object.fromEntries(accounts.map(acc => [String(acc.characterId), acc]));
-      if (!jobsTable) return;
-      if (!jobs.length) { jobsTable.innerHTML = '<div class="dashboard-empty">No industry jobs found.</div>'; return; }
-
-      // ── Resolve item (type) names ────────────────────────────────────────
-      // getNames → 'esi-names' returns [{id, name}, ...] array — convert to map.
-      const typeIdsNeeded = [...new Set(
-        jobs.flatMap(j => [j.product_type_id, j.blueprint_type_id].filter(Boolean))
-      )];
-      const typeNameMap = {};
-      if (typeIdsNeeded.length) {
-        try {
-          const namesArr = await window.eveAPI.getNames(typeIdsNeeded);
-          if (Array.isArray(namesArr)) {
-            namesArr.forEach(({ id, name }) => { if (id && name) typeNameMap[id] = name; });
-          } else if (namesArr && typeof namesArr === 'object') {
-            Object.assign(typeNameMap, namesArr);
-          }
-        } catch { /* sde fallback applied per-row */ }
-      }
-
-      // ── Resolve solar system names ───────────────────────────────────────
-      // main.js stamps solar_system_name on fresh fetches, but cached jobs
-      // written before that fix won't have it. Resolve any gaps here using
-      // resolveSystemNames → locator.esiNamesPost which returns { id: name }.
-      const systemIdsNeeded = [...new Set(
-        jobs.filter(j => j.solar_system_id && !j.solar_system_name).map(j => j.solar_system_id)
-      )];
-      let systemNameMap = {};
-      if (systemIdsNeeded.length) {
-        try {
-          // resolveSystemNames returns a proper { id: name } object map
-          systemNameMap = await window.eveAPI.resolveSystemNames(systemIdsNeeded);
-        } catch { /* raw ID fallback applied per-row */ }
-      }
-
-      // ── Render table ─────────────────────────────────────────────────────
-      const sorted = jobs.sort((a, b) =>
-        new Date(b.end_date || b.completed_date || 0) - new Date(a.end_date || a.completed_date || 0)
-      );
-
-      // SDE fallback for any type IDs esi-names didn't cover (blueprints etc.)
-      const missingTypeIds = [...new Set(
-        jobs.flatMap(j => [j.product_type_id, j.blueprint_type_id].filter(Boolean))
-            .filter(id => !typeNameMap[id])
-      )];
-      await Promise.all(missingTypeIds.map(async id => {
-        try {
-          const name = await window.eveAPI.sdeGetName(id);
-          if (name) typeNameMap[id] = name;
-        } catch { /* leave as Type {id} */ }
-      }));
-
-      const rows = sorted.map(job => {
-        const charName = accountMap[String(job.character_id)]?.characterName || `Char ${job.character_id}`;
-
-        // Item: product for manufacturing, blueprint for research/copy/invention
-        const itemTypeId = job.product_type_id || job.blueprint_type_id || null;
-        const itemName   = (itemTypeId && typeNameMap[itemTypeId])
-          || (itemTypeId ? `Type ${itemTypeId}` : 'Unknown');
-
-        // System name: stamped by main.js on fresh fetch; systemNameMap covers
-        // any cached jobs that predate that. Raw ID is the last resort.
-        const systemName = job.solar_system_name
-          || (job.solar_system_id && systemNameMap[job.solar_system_id])
-          || (job.solar_system_id ? `System ${job.solar_system_id}` : 'Unknown');
-
-        const finished = job.end_date || job.completed_date || null;
-        const finishedStr = finished ? new Date(finished).toLocaleString() : '—';
-
-        const itemIcon64 = `https://images.evetech.net/types/${itemTypeId}/icon?size=64`;
-        const itemIcon32 = `https://images.evetech.net/types/${itemTypeId}/icon?size=32`;
-        const itemBp32   = `https://images.evetech.net/types/${itemTypeId}/bp?size=32`;
-        const itemIconHtml = itemTypeId ? `<img
-          src="${itemIcon64}"
-          alt="${escHtml(itemName)}"
-          style="width:22px;height:22px;border-radius:3px;vertical-align:middle;
-                 margin-right:6px;object-fit:cover;flex-shrink:0;
-                 border:1px solid var(--border);background:var(--bg-2);"
-          onerror="if(this.src==='${itemIcon64}'){this.src='${itemIcon32}';}else if(this.src==='${itemIcon32}'){this.src='${itemBp32}';}else{this.style.display='none';}"/>` : '';
-
-        const charPortraitHtml = `<img
-          src="https://images.evetech.net/characters/${job.character_id}/portrait?size=32"
-          alt="${escHtml(charName)}"
-          style="width:22px;height:22px;border-radius:3px;vertical-align:middle;
-                 margin-right:6px;object-fit:cover;flex-shrink:0;
-                 border:1px solid var(--border);"
-          onerror="this.style.display='none'"/>`;
-
-        return `<tr>
-          <td style="white-space:nowrap;">${charPortraitHtml}${escHtml(charName)}</td>
-          <td style="white-space:nowrap;">${itemIconHtml}${escHtml(itemName)}</td>
-          <td>${escHtml(systemName)}</td>
-          <td>${escHtml(finishedStr)}</td>
-        </tr>`;
-      }).join('');
-
-      jobsTable.innerHTML = `
-        <div class="dashboard-jobs-summary">${jobs.length} job${jobs.length === 1 ? '' : 's'} · ${new Set(jobs.map(j => String(j.character_id))).size} character(s)</div>
-        <div class="dashboard-jobs-scroll">
-          <table class="dashboard-jobs-list">
-            <thead><tr><th>Character</th><th>Item</th><th>System</th><th>Completed</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>`;
+      const allJobs    = responses.flat();
+      const activeJobs = allJobs.filter(j => j.status === 'active' || j.status === 'ready' || j.status === 'paused');
+      renderActiveJobsWidget(container, activeJobs, accounts);
     } catch (e) {
-      console.error('[dashboard] Jobs table failed:', e);
-      if (jobsTable) jobsTable.innerHTML = '<div class="dashboard-empty">Failed to load jobs.</div>';
+      console.error('[dashboard] Active jobs widget failed:', e);
+      container.innerHTML = '<div class="active-jobs-empty">Failed to load.</div>';
     }
   })();
 
@@ -996,6 +879,149 @@ function setupDashboardWidgetDrag() {
   }
 }
 
+// ─── Active industry jobs widget ─────────────────────────────────────────────
+
+const _AJ_ACTIVITY = {
+  1: { label: 'Manufacturing', cls: 'aj-act-1' },
+  3: { label: 'TE Research',   cls: 'aj-act-3' },
+  4: { label: 'ME Research',   cls: 'aj-act-4' },
+  5: { label: 'BP Copy',       cls: 'aj-act-5' },
+  7: { label: 'Reverse Eng.',  cls: 'aj-act-7' },
+  8: { label: 'Invention',     cls: 'aj-act-8' },
+};
+
+function _fmtTimeLeft(ms) {
+  if (ms <= 0) return 'Done';
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+// Resolve item names for a list of type IDs using ESI names then SDE fallback.
+async function _resolveTypeNames(typeIds) {
+  const map = {};
+  if (!typeIds.length) return map;
+  try {
+    const arr = await window.eveAPI.getNames(typeIds);
+    if (Array.isArray(arr)) arr.forEach(({ id, name }) => { if (id && name) map[id] = name; });
+    else if (arr && typeof arr === 'object') Object.assign(map, arr);
+  } catch { /* fall through to SDE */ }
+  const missing = typeIds.filter(id => !map[id]);
+  await Promise.all(missing.map(async id => {
+    try { const n = await window.eveAPI.sdeGetName(id); if (n) map[id] = n; } catch { /* skip */ }
+  }));
+  return map;
+}
+
+async function renderActiveJobsWidget(container, jobs, accounts) {
+  if (!jobs.length) {
+    container.innerHTML = '<div class="active-jobs-empty">No active industry jobs.</div>';
+    return;
+  }
+
+  const accountMap = Object.fromEntries(accounts.map(a => [String(a.characterId), a]));
+
+  // Resolve type names
+  const typeIds = [...new Set(
+    jobs.flatMap(j => [j.product_type_id, j.blueprint_type_id].filter(Boolean))
+  )];
+  const typeNames = await _resolveTypeNames(typeIds);
+
+  const now = Date.now();
+
+  // Sort: active first (by end_date asc), then ready, then paused
+  const order = { active: 0, ready: 1, paused: 2 };
+  const sorted = [...jobs].sort((a, b) => {
+    const oa = order[a.status] ?? 3, ob = order[b.status] ?? 3;
+    if (oa !== ob) return oa - ob;
+    return new Date(a.end_date) - new Date(b.end_date);
+  });
+
+  const rows = sorted.map(job => {
+    const charName   = accountMap[String(job.character_id)]?.characterName || `Char ${job.character_id}`;
+    const itemTypeId = job.product_type_id || job.blueprint_type_id || null;
+    const itemName   = (itemTypeId && typeNames[itemTypeId]) || (itemTypeId ? `Type ${itemTypeId}` : 'Unknown');
+    const sysName    = job.solar_system_name || (job.solar_system_id ? `System ${job.solar_system_id}` : '—');
+    const act        = _AJ_ACTIVITY[job.activity_id] || { label: `Activity ${job.activity_id}`, cls: '' };
+
+    // Same 3-step fallback as finished-jobs: 64px icon → 32px icon → bp image → hide
+    const icon64 = `https://images.evetech.net/types/${itemTypeId}/icon?size=64`;
+    const icon32 = `https://images.evetech.net/types/${itemTypeId}/icon?size=32`;
+    const iconBp = `https://images.evetech.net/types/${itemTypeId}/bp?size=32`;
+    const itemIcon = itemTypeId
+      ? `<img src="${icon64}"
+              alt="${escHtml(itemName)}"
+              style="width:22px;height:22px;border-radius:3px;border:1px solid var(--border);
+                     vertical-align:middle;margin-right:6px;object-fit:cover;
+                     flex-shrink:0;background:var(--bg-deep);"
+              onerror="if(this.src==='${icon64}'){this.src='${icon32}';}else if(this.src==='${icon32}'){this.src='${iconBp}';}else{this.style.display='none';}"/>`
+      : '';
+
+    const charPortrait = `<img
+      src="https://images.evetech.net/characters/${job.character_id}/portrait?size=32"
+      alt="" style="width:20px;height:20px;border-radius:3px;border:1px solid var(--border);
+                    vertical-align:middle;margin-right:5px;object-fit:cover;"
+      onerror="this.style.display='none'"/>`;
+
+    let progressCell;
+    if (job.status === 'ready') {
+      progressCell = `<td><span class="aj-status-ready">✓ READY</span></td>`;
+    } else if (job.status === 'paused') {
+      progressCell = `<td><span class="aj-status-paused">⏸ PAUSED</span></td>`;
+    } else {
+      const start   = new Date(job.start_date).getTime();
+      const end     = new Date(job.end_date).getTime();
+      const pct     = Math.min(100, Math.max(0, ((now - start) / (end - start)) * 100));
+      const left    = Math.max(0, end - now);
+      // Colour: green when almost done, accent/red otherwise
+      const fillCol = pct >= 90 ? '#4ecbb0' : pct >= 50 ? 'var(--accent)' : '#c0392b';
+      progressCell  = `
+        <td>
+          <div class="aj-progress-wrap">
+            <div class="aj-progress-track">
+              <div class="aj-progress-fill" style="width:${pct.toFixed(1)}%;background:${fillCol};"></div>
+            </div>
+            <div class="aj-progress-label">${_fmtTimeLeft(left)} left</div>
+          </div>
+        </td>`;
+    }
+
+    return `<tr>
+      <td class="aj-cell-char">${charPortrait}${escHtml(charName)}</td>
+      <td class="aj-cell-item">${itemIcon}<span>${escHtml(itemName)}</span></td>
+      <td><span class="aj-activity-badge ${act.cls}">${act.label}</span></td>
+      ${progressCell}
+      <td style="color:var(--text-3);font-size:11px;white-space:nowrap;">${job.runs ?? 1}×</td>
+      <td style="color:var(--text-3);font-size:11px;white-space:nowrap;">${escHtml(sysName)}</td>
+    </tr>`;
+  }).join('');
+
+  const charCount = new Set(jobs.map(j => String(j.character_id))).size;
+  container.innerHTML = `
+    <div class="active-jobs-summary">
+      ${jobs.length} job${jobs.length !== 1 ? 's' : ''} · ${charCount} character${charCount !== 1 ? 's' : ''}
+    </div>
+    <div class="active-jobs-scroll">
+      <table class="active-jobs-list">
+        <thead>
+          <tr>
+            <th>CHARACTER</th>
+            <th>ITEM</th>
+            <th>ACTIVITY</th>
+            <th>PROGRESS</th>
+            <th>RUNS</th>
+            <th>SYSTEM</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
 // ─── Alliance-space incursion alert widget ────────────────────────────────────
 
 function _incSecColor(sec) {
@@ -1040,11 +1066,19 @@ async function renderAllianceIncursionAlert(allianceId) {
         </td>
         <td class="inc-cell-state">
           <span class="inc-state-badge ${_incStateClass(s.state)}">${escHtml(s.state)}</span>
-          ${s.hasBoss ? '<span class="inc-boss-badge">BOSS</span>' : ''}
+          ${s.isHQ
+            ? `<img class="inc-site-icon" src="https://images.evetech.net/types/3514/render?size=64"
+                    title="HQ — Sansha Mothership spawns here" alt="Revenant"/>`
+            : `<img class="inc-site-icon" src="https://images.evetech.net/types/17736/render?size=64"
+                    title="Nightmare-class site" alt="Nightmare"/>`}
         </td>
         <td class="inc-cell-action">
           <button class="inc-view-btn" onclick="viewSystemOnMap(${s.systemId})">
             View on Map →
+          </button>
+          <button class="inc-nav-btn" onclick="incursionNavigateTo(${s.systemId}, this)"
+                  title="Set autopilot destination in active EVE client">
+            ⊕ Navigate
           </button>
         </td>
       </tr>`).join('');
@@ -1055,7 +1089,7 @@ async function renderAllianceIncursionAlert(allianceId) {
         <div class="inc-alert-header">
           <div class="inc-alert-light" title="Active incursion"></div>
           <img class="inc-alert-logo"
-               src="https://images.evetech.net/corporations/1000122/logo?size=64"
+               src="https://images.evetech.net/types/3514/render?size=64"
                alt="Sansha's Nation"
                onerror="this.style.display='none'"/>
           <div class="inc-alert-title-block">
@@ -1065,6 +1099,11 @@ async function renderAllianceIncursionAlert(allianceId) {
               <strong>${systems.length}</strong> system${plural ? 's' : ''}
               within your alliance's sovereign territory
             </div>
+          </div>
+          <div class="inc-projected-earnings" id="incProjectedEarnings">
+            <div class="inc-earn-label">PROJECTED EARNINGS</div>
+            <div class="inc-earn-sub">avg last 3 runs</div>
+            <div class="inc-earn-value" id="incEarnValue">—</div>
           </div>
         </div>
         <table class="inc-alert-table">
@@ -1077,9 +1116,103 @@ async function renderAllianceIncursionAlert(allianceId) {
         </table>
       </div>`;
 
+    // Load projected earnings in background — updates #incEarnValue when ready
+    loadIncursionEarnings().catch(() => {});
+
   } catch (e) {
     console.warn('[dashboard] Incursion alert failed:', e.message);
     container.style.display = 'none';
+  }
+}
+
+// ─── Incursion earnings calculator ───────────────────────────────────────────
+// Groups wallet journal incursion_site_reward entries into sessions
+// (entries within 4 h of each other = same run), averages the last 3 sessions.
+
+function _groupIntoSessions(entries, gapHours = 4) {
+  if (!entries.length) return [];
+  const sorted = [...entries].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const sessions = [];
+  let cur = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = new Date(sorted[i - 1].date) - new Date(sorted[i].date);
+    if (gap > gapHours * 3_600_000) { sessions.push(cur); cur = []; }
+    cur.push(sorted[i]);
+  }
+  sessions.push(cur);
+  return sessions;
+}
+
+async function loadIncursionEarnings() {
+  const valueEl = document.getElementById('incEarnValue');
+  if (!valueEl) return;
+
+  try {
+    const accounts    = await window.eveAPI.getAccounts().catch(() => []);
+    const allEntries  = [];
+
+    for (const acc of accounts) {
+      try {
+        const journal = await window.eveAPI.getWalletJournal(acc.characterId);
+        if (!Array.isArray(journal)) continue;
+        for (const e of journal) {
+          if (!e.amount || e.amount <= 0) continue;
+          const desc = (e.description || '').toLowerCase();
+          // "CONCORD rewarded {name} for services performed." — corporate reward payout
+          const isConcordPayout =
+            e.ref_type === 'corporate_reward_payout' ||
+            (desc.includes('concord rewarded') && desc.includes('for services performed'));
+          if (isConcordPayout) {
+            allEntries.push({ amount: e.amount, date: e.date });
+          }
+        }
+      } catch { /* skip character */ }
+    }
+
+    if (!allEntries.length) {
+      valueEl.innerHTML = '<span class="inc-earn-lp-note">No data — sync wallet after a run</span>';
+      return;
+    }
+
+    // Group into incursion events: entries more than 8 days apart = different event.
+    // Incursions last at most 8 days so any gap larger than that signals a new event.
+    const sessions      = _groupIntoSessions(allEntries, 8 * 24);
+    const last3         = sessions.slice(0, 3);
+    const totals        = last3.map(s => s.reduce((sum, e) => sum + e.amount, 0));
+    const avgISK        = totals.reduce((a, b) => a + b, 0) / totals.length;
+    const runsUsed      = last3.length;
+    const sites         = last3.reduce((sum, s) => sum + s.length, 0);
+
+    valueEl.innerHTML = `
+      <span class="inc-earn-isk">${formatISK(avgISK)}</span>
+      <span class="inc-earn-lp-note">${runsUsed} run${runsUsed !== 1 ? 's' : ''} · ${sites} site${sites !== 1 ? 's' : ''} · LP not tracked</span>`;
+  } catch (e) {
+    console.warn('[dashboard] Incursion earnings failed:', e.message);
+  }
+}
+
+// Sets the autopilot destination in the active EVE client via ESI.
+// Fetches a fresh accounts list at call-time so stale selectedCharacterId
+// state (e.g. after re-authentication) never causes "Account not found".
+async function incursionNavigateTo(systemId, btn) {
+  const orig = btn.textContent;
+  btn.disabled    = true;
+  btn.textContent = '…';
+  try {
+    const accounts = await window.eveAPI.getAccounts().catch(() => []);
+    if (!accounts.length) throw new Error('No characters added — please add a character first.');
+
+    // Prefer the currently selected character; fall back to the first account.
+    const match  = accounts.find(a => String(a.characterId) === String(selectedCharacterId));
+    const charId = (match || accounts[0]).characterId;
+
+    await window.eveAPI.setAutopilotDestination(charId, systemId);
+    btn.textContent = '✓ Set';
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000);
+  } catch (e) {
+    showToast(`Navigate failed: ${e.message}`, 'error');
+    btn.textContent = orig;
+    btn.disabled    = false;
   }
 }
 

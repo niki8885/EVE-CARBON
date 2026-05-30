@@ -89,9 +89,11 @@ const PAGE_HTML = {
             <div class="dashboard-panel-title">&#x2B21; NET WORTH &amp; WEALTH GROWTH</div>
             <div id="dashboardNetworthSummary"></div>
           </div>
-          <div class="dashboard-panel" id="dashboardJobsPanel">
-            <div class="dashboard-panel-title">&#x25C8; FINISHED INDUSTRY JOBS</div>
-            <div id="dashboardJobsTable"></div>
+          <div class="dashboard-panel" id="dashboardActiveJobsPanel" style="min-height:0;">
+            <div class="dashboard-panel-title">&#x25B6; ACTIVE INDUSTRY JOBS</div>
+            <div id="dashboardActiveJobsTable">
+              <div style="padding:16px 0;text-align:center;color:var(--text-3);font-family:var(--mono);font-size:11px;">Loading…</div>
+            </div>
           </div>
         </div>
       </div>

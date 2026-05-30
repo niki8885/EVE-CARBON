@@ -52,10 +52,15 @@ function registerMapHandlers({ ipcHandle, httpGet, readCache, writeCache, getSde
       // Intersect with infested systems
       const infested = [];
       for (const inc of incursions) {
+        const stagingId = inc.staging_solar_system_id || null;
         for (const sysId of (inc.infested_solar_systems || [])) {
           if (allianceSysIds.has(sysId)) {
-            infested.push({ systemId: sysId, state: inc.state || 'Unknown',
-                            hasBoss: !!inc.has_boss });
+            infested.push({
+              systemId: sysId,
+              state:    inc.state || 'Unknown',
+              hasBoss:  !!inc.has_boss,
+              isHQ:     sysId === stagingId,
+            });
           }
         }
       }
@@ -100,6 +105,7 @@ function registerMapHandlers({ ipcHandle, httpGet, readCache, writeCache, getSde
             regionName: regMap[sys.regionId] || 'Unknown',
             state:      s.state,
             hasBoss:    s.hasBoss,
+            isHQ:       s.isHQ,
           };
         }),
       };

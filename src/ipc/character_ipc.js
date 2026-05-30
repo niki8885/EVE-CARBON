@@ -101,6 +101,68 @@ function registerCharacterHandlers({
     }
   });
 
+  // ─── IPC: Set autopilot destination in active EVE client ─────────────────────
+  // Requires esi-ui.write_waypoint.v1 scope — character must re-auth if missing.
+  // clear_other_waypoints=true sets this as the sole destination.
+  ipcHandle('set-autopilot-destination', async (_, { characterId, systemId }) => {
+    const token = await getValidToken(characterId);
+    const url   = `${ESI_BASE}/v2/ui/autopilot/waypoint/?add_to_beginning=false`
+                + `&clear_other_waypoints=true&destination_id=${systemId}&datasource=tranquility`;
+    const res   = await fetch(url, {
+      method:  'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      let parsed;
+      try { parsed = JSON.parse(body); } catch { parsed = null; }
+      const desc = (parsed?.error_description || parsed?.error || body).toString();
+      if (
+        desc.includes('Client could not be found') ||
+        desc.includes('not valid for') ||
+        desc.includes('Unauthorized') ||
+        res.status === 401
+      ) {
+        throw new Error('Re-authenticate this character to enable autopilot control: Characters page → remove the character → re-add via SSO.');
+      }
+      throw new Error(`ESI waypoint ${res.status}: ${body}`);
+    }
+    return { success: true };
+  });
+
+  // ─── IPC: Active industry jobs (ESI, no ?status=completed) ──────────────────
+  // Returns jobs with status active | ready | paused — never delivered.
+  // Short cache (5 min) so the progress bars stay reasonably accurate.
+  ipcHandle('get-character-active-jobs', async (_, characterId) => {
+    const cacheKey = `jobs_active_${characterId}`;
+    const cached   = readCache(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const token  = await getValidToken(characterId);
+      const url    = `${ESI_BASE}/latest/characters/${characterId}/industry/jobs/?datasource=tranquility`;
+      const jobs   = await httpGet(url, { Authorization: `Bearer ${token}` });
+      if (!Array.isArray(jobs)) return [];
+
+      const systemIds = [...new Set(jobs.filter(j => j.solar_system_id).map(j => j.solar_system_id))];
+      const nameMap   = systemIds.length ? await resolveNames(systemIds) : {};
+      const result    = jobs.map(job => ({
+        ...job,
+        solar_system_name: nameMap[job.solar_system_id] || `System ${job.solar_system_id || 'Unknown'}`,
+      }));
+
+      writeCache(cacheKey, result, 5 / 1440); // 5-minute cache
+      return result;
+    } catch (e) {
+      if (e.isRateLimit) {
+        const stale = readCache(`${cacheKey}_stale`);
+        if (stale) return stale;
+      }
+      console.warn('Failed to load active jobs:', e.message || e);
+      return [];
+    }
+  });
+
   // ─── IPC: Character public info (ESI) ────────────────────────────────────
   ipcHandle('get-character-info', async (_, characterId) => {
     try {
