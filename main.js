@@ -16,6 +16,7 @@ const { registerStationHandlers }   = require('./src/ipc/station_ipc');
 const { registerConfigHandlers }    = require('./src/ipc/config_ipc');
 const { registerPingFileHandlers }  = require('./src/ipc/ping_ipc');
 const { registerPIHandlers, syncPIForCharacter } = require('./src/ipc/pi_ipc');
+const { registerMapHandlers }  = require('./src/ipc/map_ipc');
 
 // Load environment variables from .env file in both development and production.
 const envPath = app.isPackaged
@@ -286,6 +287,13 @@ app.whenReady().then(async () => {
     httpGet,
     resolveNames,
     charInfoDb,
+    getSdeDb: () => sdeDb,
+  });
+  registerMapHandlers({
+    ipcHandle,
+    httpGet,
+    readCache,
+    writeCache,
     getSdeDb: () => sdeDb,
   });
   // Jabber must register AFTER initPaths() so configPath is set, and AFTER

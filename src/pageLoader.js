@@ -83,6 +83,7 @@ const PAGE_HTML = {
       <div class="page-content"
            style="display:flex; flex-direction:column; gap:16px; padding:16px; overflow-y:auto;">
         <div id="dashboardWelcomeBanner" class="dashboard-welcome-banner"></div>
+        <div id="allianceIncursionAlert" style="display:none;"></div>
         <div id="dashboardContent" class="dashboard-grid" style="position:relative;">
           <div class="dashboard-panel" id="dashboardSummaryPanel">
             <div class="dashboard-panel-title">&#x2B21; NET WORTH &amp; WEALTH GROWTH</div>
@@ -202,18 +203,8 @@ const PAGE_HTML = {
       </div>
     </div>`,
 
-  // ── Map ─────────────────────────────────────────────────────────────────────
-  map: `
-    <div id="page-map" class="nav-page"
-         style="flex-direction:column; height:100%;">
-      <div class="page-header">
-        <h2>Map</h2>
-        <button class="close-page-btn" onclick="closePage('map')">✕</button>
-      </div>
-      <div class="page-content">
-        <p>Map and navigation page - coming soon</p>
-      </div>
-    </div>`,
+  // ── Map — fetched at runtime (see loadAllPages below) ───────────────────────
+  // page-map.html is the single source of truth for the map page.
 
   // ── Planetary Interaction ───────────────────────────────────────────────────
   pi: `
@@ -362,6 +353,22 @@ async function loadAllPages() {
     fallback.id        = 'page-assets';
     fallback.className = 'nav-page';
     fallback.innerHTML = '<p style="padding:20px;color:var(--text-2);">Assets page failed to load.</p>';
+    container.appendChild(fallback);
+  }
+
+  // 3. Fetch and inject page-map.html — single source of truth for the map page.
+  try {
+    const res  = await fetch('./html/page-map.html');
+    const html = await res.text();
+    const tmp  = document.createElement('div');
+    tmp.innerHTML = html;
+    while (tmp.firstChild) container.appendChild(tmp.firstChild);
+  } catch (e) {
+    console.error('[pageLoader] Failed to load page-map.html:', e);
+    const fallback = document.createElement('div');
+    fallback.id        = 'page-map';
+    fallback.className = 'nav-page';
+    fallback.innerHTML = '<p style="padding:20px;color:var(--text-2);">Map page failed to load.</p>';
     container.appendChild(fallback);
   }
 }

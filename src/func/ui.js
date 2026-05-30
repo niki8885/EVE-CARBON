@@ -122,6 +122,7 @@ function navigateToPage(page) {
   if (page === 'industry')   initIndustryPage();
   if (page === 'pi')         loadPlanetaryInteraction();
   if (page === 'jabber')     loadJabberHistory();
+  if (page === 'map')        initMapPage();
 }
 
 // ─── Nav Status Lights ────────────────────────────────────────────────────────

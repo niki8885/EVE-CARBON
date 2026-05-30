@@ -1,11 +1,75 @@
 <!-- ── Map Page ───────────────────────────────────────────────────────────── -->
-<div id="page-map" class="nav-page"
-     style="flex-direction:column; height:100%;">
-  <div class="page-header">
-    <h2>Map</h2>
+<div id="page-map" class="nav-page">
+  <div class="page-header" style="flex-wrap:wrap; gap:8px; align-items:center;">
+    <h2 style="flex-shrink:0;">Galaxy Map</h2>
+
+    <!-- Toolbar -->
+    <div class="map-toolbar">
+
+      <!-- Overlay selector -->
+      <div class="map-overlay-group">
+        <span class="map-group-label">OVERLAY</span>
+        <button class="map-overlay-btn active" data-overlay="security">Security</button>
+        <button class="map-overlay-btn" data-overlay="sovereignty">Sovereignty</button>
+        <button class="map-overlay-btn" data-overlay="incursions">Incursions</button>
+      </div>
+
+      <!-- Jump bridge toggle -->
+      <button class="map-toggle-btn" id="mapJbToggle" title="Highlight systems with Infrastructure Hubs (IHUB) — jump-bridge prerequisite">
+        ◈ Jump Bridges
+      </button>
+
+      <!-- System search -->
+      <div class="map-search-wrap">
+        <input id="mapSearchInput" type="text"
+               class="map-search-input"
+               placeholder="Find system…"
+               autocomplete="off"
+               spellcheck="false" />
+        <div id="mapSearchResults" class="map-search-results" style="display:none;"></div>
+      </div>
+
+      <!-- Refresh live data -->
+      <button class="map-refresh-btn" id="mapRefreshBtn" title="Refresh sovereignty / incursions / jump bridges">⟳</button>
+    </div>
+
     <button class="close-page-btn" onclick="closePage('map')">✕</button>
   </div>
-  <div class="page-content">
-    <p>Map and navigation page - coming soon</p>
+
+  <!-- Map viewport fills all remaining space -->
+  <div class="map-viewport" id="mapViewport">
+
+    <!-- Loading spinner (visible until SDE data is ready) -->
+    <div class="map-loading" id="mapLoading" style="display:none;">
+      <div class="map-loading-spinner"></div>
+      <div class="map-loading-text">Loading galaxy data…</div>
+    </div>
+
+    <!-- Main canvas — sized to parent by ResizeObserver in map.js -->
+    <canvas id="mapCanvas"></canvas>
+
+    <!-- Floating tooltip (system name on hover) -->
+    <div id="mapTooltip"></div>
+
+    <!-- System info panel (shown on click) -->
+    <div class="map-info-panel" id="mapInfoPanel" style="display:none;">
+      <div class="map-info-header">
+        <span id="mapInfoSystemName">—</span>
+        <button class="map-info-close" onclick="mapCloseInfo()">✕</button>
+      </div>
+      <div class="map-info-body" id="mapInfoBody"></div>
+    </div>
+
+    <!-- Zoom controls (bottom-right) -->
+    <div class="map-zoom-controls">
+      <button class="map-zoom-btn" id="mapZoomIn"  title="Zoom in">+</button>
+      <button class="map-zoom-btn" id="mapZoomOut" title="Zoom out">−</button>
+      <button class="map-zoom-btn" id="mapZoomFit" title="Fit galaxy to view"
+              style="font-size:13px;">⊡</button>
+    </div>
+
+    <!-- Colour legend (bottom-left) -->
+    <div class="map-legend" id="mapLegend"></div>
+
   </div>
 </div>

@@ -20,7 +20,7 @@ var jabberFilterBroadcastOnly = false;
 /** Strip zero-width / invisible Unicode chars used as EVE field separators. */
 function jabberStripInvisible(str) {
   if (!str) return '';
-  return str.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF\u00AD\uFFFD]/g, '').trim();
+  return str.replace(/[​-‏‪-‮⁠-⁤﻿­�]/g, '').trim();
 }
 
 /**
@@ -239,7 +239,7 @@ async function autoConnectJabber() {
 
 function bindJabberEvents() {
   // Live messages from main process.
-  // When the DB insert succeeds, the broadcast is a complete DB row (has
+  // When the DB insert succeeded, the broadcast is a complete DB row (has
   // raw_body). When it fails, the broadcast is the raw XMPP msg (has body).
   // Handle both so cells always show content regardless of DB state.
   window.eveAPI.on('jabber-message', (payload) => {

@@ -15,7 +15,7 @@
       --bg-card:      rgba(20, 20, 20, 0.80);
       --border:       #f800002c;
       --border-e:     #1a1a1a;
-      --accent:       #c0392b;
+      --accent:       #e92b16;
       --accent-dim:   rgba(192, 57, 43, 0.12);
       --accent-30:    rgba(192, 57, 43, 0.30);
       --text-1:       #c8c8c8;
@@ -70,8 +70,8 @@
     body::before {
       content: '';
       position: fixed;
-      top: -80px;
-      left: -60px;
+      top: -15px;
+      left: -15px;
       width: 520px;
       height: 520px;
       background: radial-gradient(
@@ -614,6 +614,9 @@
 
     // ── Populate UI ──────────────────────────────────────────────────────────
     function populate(msg) {
+      // DB rows use 'raw_body'; raw XMPP messages use 'body'. Normalise here.
+      const rawText = msg.raw_body || msg.body || '';
+
       // If the message already has parsed fields (from DB), use them directly.
       // Otherwise parse from the raw body.
       let fc      = msg.fc_name         || null;
@@ -629,15 +632,16 @@
                     || '—';
       let eveTime = msg.eve_timecode     || msg.ping_timestamp || null;
 
-      // If any key field is missing, try to parse the raw body
-      if (!fc && !formup && (msg.body || msg.hurf)) {
-        const parsed = parsePingBody(msg.body || msg.hurf || '');
+      // If key structured fields are missing, try to parse from the raw body.
+      // This handles non-fleet pings (no FC Name / Formup) and raw XMPP messages.
+      if (!fc && !formup && rawText) {
+        const parsed = parsePingBody(rawText);
         fc       = fc       || parsed.fc       || null;
         formup   = formup   || parsed.formup   || null;
         comms    = comms    || parsed.comms    || null;
         papType  = papType  || parsed.papType  || null;
         doctrine = doctrine || parsed.doctrine || null;
-        hurf     = hurf     || parsed.hurf     || msg.body || null;
+        hurf     = hurf     || parsed.hurf     || null;
         target   = target   || parsed.target   || null;
         sig      = sig      || parsed.sig      || null;
       }
@@ -675,8 +679,8 @@
       document.getElementById('doctrine').textContent  = truncate(doctrine, 36);
       if (doctrine) document.getElementById('doctrine').title = clean(doctrine);
 
-      // Hurf
-      document.getElementById('hurfText').textContent  = hurf ? clean(hurf) : (msg.body ? clean(msg.body) : '—');
+      // Message — prefer hurf (parsed body text), fall back to full raw body
+      document.getElementById('hurfText').textContent  = hurf ? clean(hurf) : (rawText ? clean(rawText) : '—');
 
       // Footer
       document.getElementById('targetSig').textContent = truncate(target, 20);

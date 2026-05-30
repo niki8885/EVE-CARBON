@@ -37,8 +37,9 @@
     </div>
 
     <!-- ── Main grid ─────────────────────────────────────────────────────── -->
-    <div id="dashboardContent" class="dashboard-grid" style="position:relative;">
+    <div id="dashboardContent" class="dashboard-grid">
 
+      <!-- Left column: Net Worth -->
       <div class="dashboard-panel" id="dashboardSummaryPanel">
         <div class="dashboard-panel-title">&#x2B21; NET WORTH &amp; WEALTH GROWTH</div>
         <div id="dashboardNetworthSummary">
@@ -46,11 +47,23 @@
         </div>
       </div>
 
-      <div class="dashboard-panel" id="dashboardJobsPanel">
-        <div class="dashboard-panel-title">&#x25C8; FINISHED INDUSTRY JOBS</div>
-        <div id="dashboardJobsTable">
-          <div class="loading-row">Loading jobs…</div>
+      <!-- Right column: Jobs stacked above Pings -->
+      <div class="dashboard-right-col">
+
+        <div class="dashboard-panel" id="dashboardJobsPanel">
+          <div class="dashboard-panel-title">&#x25C8; FINISHED INDUSTRY JOBS</div>
+          <div id="dashboardJobsTable">
+            <div class="loading-row">Loading jobs…</div>
+          </div>
         </div>
+
+        <div class="dashboard-panel" id="dashboardPingsPanel">
+          <div class="dashboard-panel-title">&#x2B21; LATEST PING</div>
+          <div id="dashboardPingsContent">
+            <div class="loading-row">Loading…</div>
+          </div>
+        </div>
+
       </div>
 
     </div>

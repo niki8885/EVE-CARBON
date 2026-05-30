@@ -102,6 +102,14 @@ contextBridge.exposeInMainWorld('eveAPI', {
   sdeBlueprintMaterials: (blueprintTypeId, me) =>
   ipcRenderer.invoke('sde-blueprint-materials', blueprintTypeId, me),
 
+  // Map — galaxy data (SDE) + live ESI overlays
+  mapGetGalaxy:          ()    => ipcRenderer.invoke('map-get-galaxy'),
+  mapGetSovereignty:     ()    => ipcRenderer.invoke('map-get-sovereignty'),
+  mapGetIncursions:      ()    => ipcRenderer.invoke('map-get-incursions'),
+  mapGetJumpBridges:     ()    => ipcRenderer.invoke('map-get-jump-bridges'),
+  mapGetAllianceTickers:   (ids)         => ipcRenderer.invoke('map-get-alliance-tickers', ids),
+  getSovIncursionAlert:    (allianceId)  => ipcRenderer.invoke('get-sov-incursion-alert', allianceId),
+
   // ── IPC event listeners ───────────────────────────────────────────────────
   // Single `on` definition covering all allowed channels.
   // The callback receives (...args) — the ipcRenderer _event object is stripped.

@@ -6,8 +6,9 @@
 
 const STALE_MS = 30 * 60 * 1000; // 30 minutes
 
-let _dashboardLoading   = false;
-let _autoRefreshRunning = false;
+let _dashboardLoading       = false;
+let _autoRefreshRunning     = false;
+let _pingListenerRegistered = false;
 
 // Shared set so characters.js can check which IDs are currently auto-syncing
 // and immediately reflect state on cards that are already rendered.
@@ -75,6 +76,77 @@ async function autoRefreshStaleCharacters(accounts) {
 
   } finally {
     _autoRefreshRunning = false;
+  }
+}
+
+function renderDashboardPing(ping) {
+  const el = document.getElementById('dashboardPingsContent');
+  if (!el) return;
+
+  if (!ping) {
+    el.innerHTML = '<div class="dashboard-empty">No pings recorded.</div>';
+    return;
+  }
+
+  const timeStr = ping.eve_timecode || ping.ping_timestamp || ping.received_at || '';
+
+  // Type badges
+  const directorBadge = ping.is_director
+    ? `<span class="dash-ping-badge dash-ping-badge--director">Director</span>` : '';
+  const papRaw = (ping.pap_type || '').toLowerCase();
+  let papCls = '';
+  if (papRaw && !papRaw.includes('no pap')) {
+    papCls = (papRaw.includes('stratop') || papRaw.includes('strat')) ? 'dash-ping-badge--stratop' : 'dash-ping-badge--cta';
+  }
+  const papBadge = papCls
+    ? `<span class="dash-ping-badge ${papCls}">${escHtml(ping.pap_type)}</span>` : '';
+  const sigBadge = ping.sig
+    ? `<span class="dash-ping-badge dash-ping-badge--sig">${escHtml(ping.sig)}</span>` : '';
+  const targetBadge = (ping.target_sig && ping.target_sig !== ping.sig)
+    ? `<span class="dash-ping-badge dash-ping-badge--sig">${escHtml(ping.target_sig)}</span>` : '';
+
+  const viewBtn = ping.id != null
+    ? `<button class="dash-ping-view-btn" data-ping-id="${ping.id}">View</button>` : '';
+
+  const field = (label, val, wide = false) => val
+    ? `<div class="dash-ping-field${wide ? ' dash-ping-field--wide' : ''}">
+         <span class="dash-ping-label">${label}</span>
+         <span class="dash-ping-value" title="${escHtml(val)}">${escHtml(val)}</span>
+       </div>` : '';
+
+  const docShort = ping.doctrine
+    ? ping.doctrine.replace(/https?:\/\/\S+/g, '').trim() : null;
+  const msgBody  = ping.hurf || ping.raw_body || '';
+
+  el.innerHTML = `
+    <div class="dash-ping-card">
+      <div class="dash-ping-header">
+        <div class="dash-ping-header-left">
+          <div class="dash-ping-type-row">
+            ${directorBadge}${papBadge}${sigBadge}${targetBadge}
+          </div>
+          <div class="dash-ping-from">From <span>${escHtml(ping.who_pinged || ping.gsol_member || '—')}</span></div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
+          <span class="dash-ping-time">${escHtml(timeStr)}</span>
+          ${viewBtn}
+        </div>
+      </div>
+      <div class="dash-ping-fields">
+        ${field('FC', ping.fc_name)}
+        ${field('Comms', ping.comms)}
+        ${field('Formup', ping.formup_location)}
+        ${field('PAP Type', ping.pap_type)}
+        ${field('Doctrine', docShort, true)}
+      </div>
+      ${msgBody ? `<div class="dash-ping-msg">${escHtml(msgBody)}</div>` : ''}
+    </div>`;
+
+  const viewBtnEl = el.querySelector('.dash-ping-view-btn[data-ping-id]');
+  if (viewBtnEl) {
+    viewBtnEl.addEventListener('click', () => {
+      window.eveAPI.openPingAlert(parseInt(viewBtnEl.dataset.pingId, 10));
+    });
   }
 }
 
@@ -384,7 +456,7 @@ async function loadDashboard() {
         birthday,  secStatus,
         gender:    info.gender,
         corpId:    info.corporation_id,    corpName,
-        allianceId: info.alliance_id,      allianceName,
+        allianceId: info.alliance_id,       allianceName,
         homeStationName, homeSystemSec,
         bloodlineName,
         implants,
@@ -393,6 +465,9 @@ async function loadDashboard() {
       });
 
       logToConsole('Welcome banner loaded from local DB.', 'info');
+
+      // Check if alliance holds sov with active incursions — fire-and-forget
+      renderAllianceIncursionAlert(info.alliance_id).catch(() => {});
 
     } catch (e) {
       console.warn('[dashboard] Banner render failed:', e.message);
@@ -628,13 +703,14 @@ async function loadDashboard() {
 
         const itemIcon64 = `https://images.evetech.net/types/${itemTypeId}/icon?size=64`;
         const itemIcon32 = `https://images.evetech.net/types/${itemTypeId}/icon?size=32`;
+        const itemBp32   = `https://images.evetech.net/types/${itemTypeId}/bp?size=32`;
         const itemIconHtml = itemTypeId ? `<img
           src="${itemIcon64}"
           alt="${escHtml(itemName)}"
           style="width:22px;height:22px;border-radius:3px;vertical-align:middle;
                  margin-right:6px;object-fit:cover;flex-shrink:0;
                  border:1px solid var(--border);background:var(--bg-2);"
-          onerror="if(this.src!=='${itemIcon32}'){this.src='${itemIcon32}';}else{this.style.display='none';}"/>` : '';
+          onerror="if(this.src==='${itemIcon64}'){this.src='${itemIcon32}';}else if(this.src==='${itemIcon32}'){this.src='${itemBp32}';}else{this.style.display='none';}"/>` : '';
 
         const charPortraitHtml = `<img
           src="https://images.evetech.net/characters/${job.character_id}/portrait?size=32"
@@ -665,6 +741,39 @@ async function loadDashboard() {
       if (jobsTable) jobsTable.innerHTML = '<div class="dashboard-empty">Failed to load jobs.</div>';
     }
   })();
+
+  // ── Section 4: Latest ping ───────────────────────────────────────────────
+  (async () => {
+    try {
+      // Prefer in-memory (jabberMessages is populated by jabber.js once connected)
+      // Fall back to DB for the most recent stored ping.
+      let ping = (typeof jabberMessages !== 'undefined' && jabberMessages.length > 0)
+        ? jabberMessages.reduce((a, b) =>
+            (b.eve_timecode || b.received_at || '') > (a.eve_timecode || a.received_at || '') ? b : a)
+        : null;
+
+      if (!ping) {
+        const history = await window.eveAPI.getJabberMessages(1);
+        ping = Array.isArray(history) && history.length > 0 ? history[0] : null;
+      }
+      renderDashboardPing(ping);
+    } catch (e) {
+      const el = document.getElementById('dashboardPingsContent');
+      if (el) el.innerHTML = '<div class="dashboard-empty">Could not load pings.</div>';
+    }
+  })();
+
+  // Update ping panel live when a new Jabber message arrives.
+  // Guard prevents duplicate listeners across repeated loadDashboard() calls.
+  if (!_pingListenerRegistered) {
+    _pingListenerRegistered = true;
+    window.eveAPI.on('jabber-message', (payload) => {
+      const row = (typeof jabberLiveToRow === 'function' && !('raw_body' in payload))
+        ? jabberLiveToRow(payload)
+        : payload;
+      renderDashboardPing(row);
+    });
+  }
 }
 
 // ─── KPI Panel Renderer ───────────────────────────────────────────────────────
@@ -885,4 +994,103 @@ function setupDashboardWidgetDrag() {
     document.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseup', onMouseUp);
   }
+}
+
+// ─── Alliance-space incursion alert widget ────────────────────────────────────
+
+function _incSecColor(sec) {
+  if (sec <= 0.0)  return '#ff4444';
+  if (sec <  0.5)  return '#ffaa00';
+  return '#44cc88';
+}
+
+function _incStateClass(state) {
+  switch ((state || '').toLowerCase()) {
+    case 'established':  return 'inc-state-established';
+    case 'mobilizing':   return 'inc-state-mobilizing';
+    case 'withdrawing':  return 'inc-state-withdrawing';
+    default:             return '';
+  }
+}
+
+// Renders (or hides) the incursion alert widget for the selected character's alliance.
+// Called fire-and-forget from loadDashboard — never throws.
+async function renderAllianceIncursionAlert(allianceId) {
+  const container = document.getElementById('allianceIncursionAlert');
+  if (!container) return;
+
+  if (!allianceId) { container.style.display = 'none'; return; }
+
+  try {
+    const result = await window.eveAPI.getSovIncursionAlert(allianceId);
+    if (!result || !result.systems || !result.systems.length) {
+      container.style.display = 'none';
+      return;
+    }
+
+    const systems = result.systems;
+    const plural  = systems.length !== 1;
+
+    const rows = systems.map(s => `
+      <tr class="inc-alert-row">
+        <td class="inc-cell-system">${escHtml(s.systemName)}</td>
+        <td class="inc-cell-region">${escHtml(s.regionName)}</td>
+        <td class="inc-cell-sec" style="color:${_incSecColor(s.security)};">
+          ${s.security.toFixed(1)}
+        </td>
+        <td class="inc-cell-state">
+          <span class="inc-state-badge ${_incStateClass(s.state)}">${escHtml(s.state)}</span>
+          ${s.hasBoss ? '<span class="inc-boss-badge">BOSS</span>' : ''}
+        </td>
+        <td class="inc-cell-action">
+          <button class="inc-view-btn" onclick="viewSystemOnMap(${s.systemId})">
+            View on Map →
+          </button>
+        </td>
+      </tr>`).join('');
+
+    container.style.display = 'block';
+    container.innerHTML = `
+      <div class="inc-alert-widget">
+        <div class="inc-alert-header">
+          <div class="inc-alert-light" title="Active incursion"></div>
+          <img class="inc-alert-logo"
+               src="https://images.evetech.net/corporations/1000122/logo?size=64"
+               alt="Sansha's Nation"
+               onerror="this.style.display='none'"/>
+          <div class="inc-alert-title-block">
+            <div class="inc-alert-title">⚠ SANSHA INCURSION — ALLIANCE SPACE</div>
+            <div class="inc-alert-subtitle">
+              Sansha's Nation forces active in
+              <strong>${systems.length}</strong> system${plural ? 's' : ''}
+              within your alliance's sovereign territory
+            </div>
+          </div>
+        </div>
+        <table class="inc-alert-table">
+          <thead>
+            <tr>
+              <th>SYSTEM</th><th>REGION</th><th>SEC</th><th>STATUS</th><th></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+
+  } catch (e) {
+    console.warn('[dashboard] Incursion alert failed:', e.message);
+    container.style.display = 'none';
+  }
+}
+
+// Navigates to the map page and flies to the given system in Incursions overlay.
+// Safe to call before the map has been opened for the first time.
+function viewSystemOnMap(systemId) {
+  navigateToPage('map');
+  // Give initMapPage() time to set up canvas before flying
+  setTimeout(() => {
+    if (typeof window.mapJumpToSystem === 'function') {
+      window.mapJumpToSystem(systemId);
+    }
+  }, 200);
 }
