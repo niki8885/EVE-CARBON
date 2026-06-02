@@ -150,6 +150,109 @@ function renderDashboardPing(ping) {
   }
 }
 
+// ─── Dashboard drag-and-drop panel reordering ────────────────────────────────
+
+function initDashboardDnD() {
+  const grid = document.getElementById('dashboardContent');
+  if (!grid) return;
+
+  // Restore saved layout before wiring events
+  _dndRestoreLayout();
+
+  let dragging   = null;   // panel being dragged
+  let srcCol     = null;   // column it came from
+
+  function _save() {
+    const state = {};
+    grid.querySelectorAll('.dashboard-col').forEach(col => {
+      state[col.id] = [...col.querySelectorAll(':scope > .dnd-panel')].map(p => p.id);
+    });
+    try { localStorage.setItem('dashboardLayout', JSON.stringify(state)); } catch (_) {}
+  }
+
+  function _dropIntoCol(col, refPanel, e) {
+    if (!dragging || col === dragging) return;
+    if (refPanel && refPanel !== dragging) {
+      const rect = refPanel.getBoundingClientRect();
+      col.insertBefore(dragging, e.clientY < rect.top + rect.height / 2 ? refPanel : refPanel.nextSibling);
+    } else if (!refPanel) {
+      col.appendChild(dragging);
+    }
+    _save();
+  }
+
+  // Wire panels
+  grid.querySelectorAll('.dnd-panel').forEach(panel => {
+    panel.addEventListener('dragstart', e => {
+      dragging = panel;
+      srcCol   = panel.parentElement;
+      panel.classList.add('dnd-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      // Needed for Firefox
+      e.dataTransfer.setData('text/plain', panel.id);
+    });
+
+    panel.addEventListener('dragend', () => {
+      grid.querySelectorAll('.dnd-panel').forEach(p => p.classList.remove('dnd-over', 'dnd-dragging'));
+      grid.querySelectorAll('.dashboard-col').forEach(c => c.classList.remove('dnd-col-over'));
+      dragging = null;
+      srcCol   = null;
+    });
+
+    panel.addEventListener('dragover', e => {
+      e.preventDefault();
+      if (!dragging || panel === dragging) return;
+      e.dataTransfer.dropEffect = 'move';
+      grid.querySelectorAll('.dnd-panel').forEach(p => p.classList.remove('dnd-over'));
+      panel.classList.add('dnd-over');
+    });
+
+    panel.addEventListener('drop', e => {
+      e.preventDefault();
+      const col = panel.parentElement;
+      grid.querySelectorAll('.dnd-panel').forEach(p => p.classList.remove('dnd-over'));
+      _dropIntoCol(col, panel, e);
+    });
+  });
+
+  // Wire columns (drop into empty space at bottom of col)
+  grid.querySelectorAll('.dashboard-col').forEach(col => {
+    col.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      // Only highlight col if hovering its padding (not a panel)
+      if (e.target === col) col.classList.add('dnd-col-over');
+    });
+
+    col.addEventListener('dragleave', e => {
+      if (!col.contains(e.relatedTarget)) col.classList.remove('dnd-col-over');
+    });
+
+    col.addEventListener('drop', e => {
+      e.preventDefault();
+      col.classList.remove('dnd-col-over');
+      if (e.target === col) _dropIntoCol(col, null, e);
+    });
+  });
+}
+
+function _dndRestoreLayout() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('dashboardLayout') || 'null');
+    if (!saved) return;
+    const grid = document.getElementById('dashboardContent');
+    if (!grid) return;
+    Object.entries(saved).forEach(([colId, panelIds]) => {
+      const col = document.getElementById(colId);
+      if (!col) return;
+      panelIds.forEach(pid => {
+        const panel = document.getElementById(pid);
+        if (panel) col.appendChild(panel);
+      });
+    });
+  } catch (_) {}
+}
+
 async function loadDashboard() {
   const summaryPanel   = document.getElementById('dashboardNetworthSummary');
   const welcomeBanner  = document.getElementById('dashboardWelcomeBanner');
@@ -625,7 +728,19 @@ async function loadDashboard() {
     }
   })();
 
-  // ── Section 4: Latest ping ───────────────────────────────────────────────
+  // ── Section 4: PI widget ────────────────────────────────────────────────
+  (async () => {
+    const piContainer = document.getElementById('dashboardPIWidget');
+    if (!piContainer) return;
+    try {
+      await renderDashboardPIWidget(piContainer, accounts);
+    } catch (e) {
+      console.error('[dashboard] PI widget failed:', e);
+      piContainer.innerHTML = '<div style="padding:12px;font-family:var(--mono);font-size:11px;color:var(--danger);">Failed to load PI data.</div>';
+    }
+  })();
+
+  // ── Section 5: Latest ping ───────────────────────────────────────────────
   (async () => {
     try {
       // Prefer in-memory (jabberMessages is populated by jabber.js once connected)
@@ -657,6 +772,9 @@ async function loadDashboard() {
       renderDashboardPing(row);
     });
   }
+
+  // Initialise drag-and-drop after all panels are rendered
+  initDashboardDnD();
 }
 
 // ─── KPI Panel Renderer ───────────────────────────────────────────────────────
@@ -1051,6 +1169,153 @@ async function renderActiveJobsWidget(container, jobs, accounts) {
     if (typeof navigateToPage    === 'function') navigateToPage('industry');
     if (typeof navigateIndustryTab === 'function') navigateIndustryTab('active-jobs');
   });
+}
+
+// ─── Dashboard PI Widget ──────────────────────────────────────────────────────
+
+async function renderDashboardPIWidget(container, accounts) {
+  // Gather all colonies — getPIColonies returns properly parsed storage arrays
+  const allColonies = [];
+  await Promise.allSettled(accounts.map(async acc => {
+    const charId = acc.characterId ?? acc.character_id ?? acc.id;
+    try {
+      const cols = await window.eveAPI.getPIColonies(charId) ?? [];
+      cols.forEach(c => allColonies.push({ ...c, _charName: acc.characterName || `Char ${charId}` }));
+    } catch (_) {}
+  }));
+
+  if (!allColonies.length) {
+    container.innerHTML = `
+      <div class="dashboard-panel-title dnd-handle" style="margin-bottom:10px;">
+        🪐 PLANETARY INTERACTION
+        <button class="pi-dash-link-btn" style="margin-left:auto;padding:2px 10px;font-family:var(--mono);font-size:10px;background:transparent;border:1px solid var(--border);border-radius:3px;color:var(--text-3);cursor:pointer;letter-spacing:0.06em;">VIEW PI ›</button>
+        <span class="dnd-grip">⠿</span>
+      </div>
+      <div style="padding:20px 0;text-align:center;font-family:var(--mono);font-size:11px;color:var(--text-3);">
+        No colonies found — sync your characters first.
+      </div>`;
+    container.querySelector('.pi-dash-link-btn')?.addEventListener('click', _piDashNav);
+    return;
+  }
+
+  const now = Date.now();
+
+  // Categorise every colony using the same logic as the PI page
+  let nActive = 0, nWarning = 0, nIdle = 0;
+  const soonExpiring = []; // colonies expiring within 24h, sorted soonest first
+
+  allColonies.forEach(col => {
+    const expiresAt   = col.extractor_expires_at;
+    const storageArr  = Array.isArray(col.storage) ? col.storage
+                      : (col.storage_json ? JSON.parse(col.storage_json) : []);
+    const storageFull = storageArr.some(s => s.fill_pct >= 90);
+
+    if (expiresAt && expiresAt > now) {
+      nActive++;
+      const hoursLeft = (expiresAt - now) / 3_600_000;
+      if (hoursLeft <= 24) soonExpiring.push({ col, expiresAt });
+    } else if (storageFull) {
+      nWarning++;
+    } else {
+      nIdle++;
+    }
+  });
+
+  soonExpiring.sort((a, b) => a.expiresAt - b.expiresAt);
+
+  const total    = allColonies.length;
+  const charCount = new Set(accounts.map(a => a.characterId)).size;
+
+  // Build expiry alert rows (up to 4)
+  const alertRows = soonExpiring.slice(0, 4).map(({ col, expiresAt }) => {
+    const diffMs  = expiresAt - now;
+    const hrs     = Math.floor(diffMs / 3_600_000);
+    const mins    = Math.floor((diffMs % 3_600_000) / 60_000);
+    const timeStr = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+    const urgent  = hrs < 4;
+    const pType   = col.planet_type || 'unknown';
+    const ptId    = { temperate:11, oceanic:2014, ice:12, gas:13, lava:2015, barren:2016, storm:2017, plasma:2063 }[pType] || 11;
+    return `
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 0;
+                  border-top:1px solid var(--border);">
+        <img src="https://images.evetech.net/types/${ptId}/icon?size=32"
+             style="width:18px;height:18px;border-radius:2px;flex-shrink:0;"
+             onerror="this.style.display='none'">
+        <span style="flex:1;font-size:11px;color:var(--text-2);
+                     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+          ${escHtml(col._charName)} · ${escHtml(pType.charAt(0).toUpperCase() + pType.slice(1))}
+        </span>
+        <span style="font-family:var(--mono);font-size:10px;font-weight:700;
+                     color:${urgent ? 'var(--danger)' : 'var(--warning, #e3a84d)'};
+                     white-space:nowrap;">
+          ${timeStr}
+        </span>
+      </div>`;
+  }).join('');
+
+  container.innerHTML = `
+    <!-- Header -->
+    <div class="dashboard-panel-title dnd-handle" style="margin-bottom:10px;">
+      🪐 PLANETARY INTERACTION
+      <button class="pi-dash-link-btn" style="
+        margin-left:auto;padding:2px 10px;font-family:var(--mono);font-size:10px;
+        background:transparent;border:1px solid var(--border);border-radius:3px;
+        color:var(--text-3);cursor:pointer;letter-spacing:0.06em;flex-shrink:0;">
+        VIEW PI ›
+      </button>
+      <span class="dnd-grip">⠿</span>
+    </div>
+
+    <!-- Summary line -->
+    <div style="font-family:var(--mono);font-size:11px;color:var(--text-3);margin-bottom:12px;">
+      ${total} planet${total !== 1 ? 's' : ''} · ${charCount} character${charCount !== 1 ? 's' : ''}
+    </div>
+
+    <!-- Status counts -->
+    <div style="display:flex;gap:10px;margin-bottom:12px;">
+      <div style="flex:1;padding:8px 12px;background:var(--bg-panel);border:1px solid var(--border);
+                  border-radius:6px;text-align:center;">
+        <div style="font-family:var(--mono);font-size:20px;font-weight:700;color:#4ecbb0;">
+          ${nActive}
+        </div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text-3);
+                    letter-spacing:0.08em;margin-top:2px;">EXTRACTING</div>
+      </div>
+      <div style="flex:1;padding:8px 12px;background:var(--bg-panel);border:1px solid var(--border);
+                  border-radius:6px;text-align:center;">
+        <div style="font-family:var(--mono);font-size:20px;font-weight:700;
+                    color:${nWarning > 0 ? '#e3a84d' : 'var(--text-3)'};">
+          ${nWarning}
+        </div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text-3);
+                    letter-spacing:0.08em;margin-top:2px;">STORAGE FULL</div>
+      </div>
+      <div style="flex:1;padding:8px 12px;background:var(--bg-panel);border:1px solid var(--border);
+                  border-radius:6px;text-align:center;">
+        <div style="font-family:var(--mono);font-size:20px;font-weight:700;
+                    color:${nIdle > 0 ? 'var(--text-2)' : 'var(--text-3)'};">
+          ${nIdle}
+        </div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text-3);
+                    letter-spacing:0.08em;margin-top:2px;">IDLE</div>
+      </div>
+    </div>
+
+    <!-- Expiring soon -->
+    ${soonExpiring.length ? `
+      <div style="font-family:var(--mono);font-size:9px;color:var(--text-3);
+                  letter-spacing:0.1em;margin-bottom:4px;">EXPIRING WITHIN 24H</div>
+      ${alertRows}
+    ` : nActive > 0 ? `
+      <div style="font-family:var(--mono);font-size:10px;color:var(--text-3);
+                  padding:6px 0;">All active extractors have more than 24h remaining.</div>
+    ` : ''}`;
+
+  container.querySelector('.pi-dash-link-btn')?.addEventListener('click', _piDashNav);
+}
+
+function _piDashNav() {
+  if (typeof navigateToPage === 'function') navigateToPage('pi');
 }
 
 // ─── Alliance-space incursion alert widget ────────────────────────────────────

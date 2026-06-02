@@ -470,9 +470,24 @@
 .dashboard-main-char     { font-size: 14px; color: var(--text-1); font-weight: 600; }
 
 /* ── DASHBOARD PANELS GRID ── */
-.dashboard-grid              { display: grid; grid-template-columns: 1.2fr 1fr; gap: 20px; align-items: start; min-width: 0; }
-.dashboard-panel             { padding: 18px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; min-height: 220px; overflow: hidden; }
-.dashboard-panel-title       { font-size: 13px; font-weight: 700; color: var(--text-1); margin-bottom: 12px; }
+/* ── Dashboard drag-and-drop two-column layout ─────────────────────────────── */
+.dashboard-dnd-grid          { display: flex; gap: 20px; align-items: flex-start; min-width: 0; }
+.dashboard-col               { display: flex; flex-direction: column; gap: 16px; flex: 1; min-width: 0; min-height: 80px; }
+.dashboard-col:first-child   { flex: 1.2; }
+
+.dashboard-panel             { padding: 18px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.dashboard-panel-title       { font-size: 13px; font-weight: 700; color: var(--text-1); margin-bottom: 12px;
+                               display: flex; align-items: center; gap: 8px; }
+
+/* Drag handle */
+.dnd-grip                    { margin-left: auto; color: var(--text-3); font-size: 16px; cursor: grab;
+                               opacity: 0; transition: opacity 0.15s; user-select: none; line-height: 1; }
+.dnd-panel:hover .dnd-grip   { opacity: 1; }
+.dnd-panel[draggable="true"] { cursor: default; }
+.dnd-panel.dnd-dragging      { opacity: 0.4; outline: 2px dashed var(--accent); border-radius: 14px; }
+.dnd-panel.dnd-over          { outline: 2px solid var(--accent); border-radius: 14px;
+                               box-shadow: 0 0 0 4px rgba(var(--accent-rgb, 180,120,60), 0.15); }
+.dashboard-col.dnd-col-over  { outline: 2px dashed var(--border); border-radius: 10px; background: rgba(255,255,255,0.02); }
 
 /* ── Active industry jobs widget ─────────────────────────────────────────────── */
 .active-jobs-empty {
@@ -853,8 +868,6 @@
 }
 
 /* Right column: Jobs + Pings stacked */
-.dashboard-right-col    { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.dashboard-right-col .dashboard-panel { min-height: 0; }
 #dashboardPingsPanel    { min-height: 160px; }
 
 /* ── PING PANEL ── */

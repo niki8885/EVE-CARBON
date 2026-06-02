@@ -84,15 +84,24 @@ const PAGE_HTML = {
            style="display:flex; flex-direction:column; gap:16px; padding:16px; overflow-y:auto;">
         <div id="dashboardWelcomeBanner" class="dashboard-welcome-banner"></div>
         <div id="allianceIncursionAlert" style="display:none;"></div>
-        <div id="dashboardContent" class="dashboard-grid" style="position:relative;">
-          <div class="dashboard-panel" id="dashboardSummaryPanel">
-            <div class="dashboard-panel-title">&#x2B21; NET WORTH &amp; WEALTH GROWTH</div>
-            <div id="dashboardNetworthSummary"></div>
+        <div id="dashboardContent" class="dashboard-dnd-grid">
+          <div class="dashboard-col" id="dashboardColLeft">
+            <div class="dashboard-panel dnd-panel" id="dashboardSummaryPanel" draggable="true">
+              <div class="dashboard-panel-title dnd-handle">&#x2B21; NET WORTH &amp; WEALTH GROWTH <span class="dnd-grip">⠿</span></div>
+              <div id="dashboardNetworthSummary"></div>
+            </div>
           </div>
-          <div class="dashboard-panel" id="dashboardActiveJobsPanel" style="min-height:0;">
-            <div class="dashboard-panel-title">&#x25B6; ACTIVE INDUSTRY JOBS</div>
-            <div id="dashboardActiveJobsTable">
-              <div style="padding:16px 0;text-align:center;color:var(--text-3);font-family:var(--mono);font-size:11px;">Loading…</div>
+          <div class="dashboard-col" id="dashboardColRight">
+            <div class="dashboard-panel dnd-panel" id="dashboardActiveJobsPanel" draggable="true">
+              <div class="dashboard-panel-title dnd-handle">&#x25B6; ACTIVE INDUSTRY JOBS <span class="dnd-grip">⠿</span></div>
+              <div id="dashboardActiveJobsTable">
+                <div style="padding:16px 0;text-align:center;color:var(--text-3);font-family:var(--mono);font-size:11px;">Loading…</div>
+              </div>
+            </div>
+            <div class="dashboard-panel dnd-panel" id="dashboardPIPanel" draggable="true">
+              <div id="dashboardPIWidget">
+                <div style="padding:16px 0;text-align:center;color:var(--text-3);font-family:var(--mono);font-size:11px;">Loading…</div>
+              </div>
             </div>
           </div>
         </div>
