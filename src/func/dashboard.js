@@ -1187,8 +1187,8 @@ async function renderDashboardPIWidget(container, accounts) {
   if (!allColonies.length) {
     container.innerHTML = `
       <div class="dashboard-panel-title dnd-handle" style="margin-bottom:10px;">
-        🪐 PLANETARY INTERACTION
-        <button class="pi-dash-link-btn" style="margin-left:auto;padding:2px 10px;font-family:var(--mono);font-size:10px;background:transparent;border:1px solid var(--border);border-radius:3px;color:var(--text-3);cursor:pointer;letter-spacing:0.06em;">VIEW PI ›</button>
+        <span style="flex:1;">🪐 PLANETARY INTERACTION</span>
+        <button class="pi-dash-link-btn" style="padding:2px 10px;font-family:var(--mono);font-size:10px;background:transparent;border:1px solid var(--border);border-radius:3px;color:var(--text-3);cursor:pointer;letter-spacing:0.06em;flex-shrink:0;">VIEW PI ›</button>
         <span class="dnd-grip">⠿</span>
       </div>
       <div style="padding:20px 0;text-align:center;font-family:var(--mono);font-size:11px;color:var(--text-3);">
@@ -1256,9 +1256,9 @@ async function renderDashboardPIWidget(container, accounts) {
   container.innerHTML = `
     <!-- Header -->
     <div class="dashboard-panel-title dnd-handle" style="margin-bottom:10px;">
-      🪐 PLANETARY INTERACTION
+      <span style="flex:1;">🪐 PLANETARY INTERACTION</span>
       <button class="pi-dash-link-btn" style="
-        margin-left:auto;padding:2px 10px;font-family:var(--mono);font-size:10px;
+        padding:2px 10px;font-family:var(--mono);font-size:10px;
         background:transparent;border:1px solid var(--border);border-radius:3px;
         color:var(--text-3);cursor:pointer;letter-spacing:0.06em;flex-shrink:0;">
         VIEW PI ›

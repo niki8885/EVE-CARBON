@@ -288,14 +288,26 @@ async function openBlueprintDetail(bp) {
     return;
   }
 
-  // ── Render materials table ───────────────────────────────────────────────────
+  // ── Fetch Jita prices for materials ─────────────────────────────────────────
   const { materials, productTypeId, productName, productQty, runs } = sdeResult;
+  const matTypeIds = materials.map(m => m.typeId);
+  let prices = {};
+  try { prices = await window.eveAPI.getJitaPrices(matTypeIds) || {}; } catch (_) {}
 
+  // ── Render materials table ───────────────────────────────────────────────────
   const productImg = productTypeId
     ? `<img src="${ESI_IMAGE}/${productTypeId}/icon?size=32"
             onerror="this.src='${ESI_IMAGE}/0/icon?size=32';"
             style="width:24px;height:24px;vertical-align:middle;margin-right:6px;border-radius:2px;">`
     : '';
+
+  // Calculate total build cost
+  let totalCost = 0;
+  materials.forEach(mat => {
+    const p = prices[mat.typeId];
+    const unit = p?.sell > 0 ? p.sell : (p?.buy || 0);
+    totalCost += unit * mat.adjustedQty;
+  });
 
   detailBody.innerHTML = `
     <div style="margin-bottom:16px;">
@@ -310,18 +322,45 @@ async function openBlueprintDetail(bp) {
       </div>
     </div>
 
-    <div style="font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;margin-bottom:10px;">
+    <div style="font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;margin-bottom:6px;">
       MATERIALS — 1 RUN · ME${bp.me}
-      <span style="color:var(--text-3);font-size:9px;margin-left:8px;">
-        (quantities rounded up per EVE rules)
-      </span>
+      <span style="font-size:9px;margin-left:8px;">(quantities rounded up per EVE rules)</span>
     </div>
 
-    <div id="bpMatTable" style="display:flex;flex-direction:column;gap:4px;">
-      ${materials.map(mat => renderMaterialRow(mat)).join('')}
+    <!-- Column headers -->
+    <div style="display:flex;align-items:center;gap:10px;padding:3px 10px;
+                font-family:var(--mono);font-size:9px;color:var(--text-3);letter-spacing:0.08em;
+                margin-bottom:2px;">
+      <span style="width:28px;flex-shrink:0;"></span>
+      <span style="flex:1;">MATERIAL</span>
+      <span style="min-width:70px;text-align:right;">QTY</span>
+      <span style="min-width:100px;text-align:right;">JITA SELL/UNIT</span>
+      <span style="min-width:110px;text-align:right;">TOTAL COST</span>
     </div>
 
-    <div style="margin-top:20px;padding-top:14px;border-top:1px solid var(--border);
+    <div id="bpMatTable" style="display:flex;flex-direction:column;gap:3px;">
+      ${materials.map(mat => renderMaterialRow(mat, prices)).join('')}
+    </div>
+
+    ${totalCost > 0 ? `
+    <div style="margin-top:14px;padding:12px 16px;background:var(--bg-card);
+                border:1px solid var(--border);border-radius:6px;
+                display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;">
+      <div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text-3);
+                    letter-spacing:0.12em;margin-bottom:4px;">
+          ESTIMATED BUILD COST · 1 RUN · ME${bp.me} · JITA SELL
+        </div>
+        <div style="font-family:var(--mono);font-size:20px;font-weight:700;color:var(--accent);">
+          ${formatNumber(totalCost)} ISK
+        </div>
+      </div>
+      <div style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--text-3);">
+        Based on Jita 4-4 sell orders
+      </div>
+    </div>` : ''}
+
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);
                 display:flex;gap:8px;flex-wrap:wrap;">
       <button id="bpCalcBtn" class="bp-view-btn" type="button"
               style="padding:6px 16px;font-size:11px;">
@@ -342,7 +381,7 @@ async function openBlueprintDetail(bp) {
     navigateIndustryTab('calculator');
   });
 
-  // Component tree toggle — full redesign with tier depth + reaction controls
+  // Component tree toggle — passes SDE materials so root level never needs Fuzzwork
   document.getElementById('bpTreeBtn')?.addEventListener('click', async () => {
     const treeDiv = document.getElementById('bpComponentTree');
     if (!treeDiv) return;
@@ -353,7 +392,7 @@ async function openBlueprintDetail(bp) {
     }
     treeDiv.style.display = 'block';
     document.getElementById('bpTreeBtn').textContent = '⬡ HIDE COMPONENT TREE';
-    await renderComponentTreePanel(treeDiv, bp);
+    await renderComponentTreePanel(treeDiv, bp, sdeResult.materials);
   });
 }
 
@@ -364,7 +403,34 @@ async function openBlueprintDetail(bp) {
 //   components, 99 = fully flatten everything.
 // includeReactions: if false, reaction products are treated as leaves (buy off market).
 
-async function renderComponentTreePanel(container, bp) {
+// Build a tree starting from already-known SDE materials (avoids Fuzzwork for root).
+// For each material, tries findBpForProduct to check for sub-blueprints, then recurses.
+async function buildTreeFromSdeMaterials(sdeMaterials, maxDepth, includeReactions) {
+  const REACTION_ACTIVITY = 11;
+  const nodes = [];
+  for (const mat of sdeMaterials) {
+    let subTree    = null;
+    let isReaction = false;
+    if (maxDepth > 0) {
+      try {
+        const found = await window.eveAPI.findBpForProduct(mat.typeId);
+        const entry = found?.[mat.typeId];
+        if (entry?.blueprintDetails) {
+          const actId = entry.blueprintDetails.activityID ?? 1;
+          isReaction  = actId === REACTION_ACTIVITY;
+          if (!isReaction || includeReactions) {
+            const subBpId = entry.blueprintDetails.blueprintTypeID;
+            subTree = await buildRecursiveMaterialTree(subBpId, mat.adjustedQty, 0, maxDepth - 1, includeReactions);
+          }
+        }
+      } catch (_) {}
+    }
+    nodes.push({ typeid: mat.typeId, name: mat.name, quantity: mat.adjustedQty, subTree, isReaction, depth: 0 });
+  }
+  return nodes;
+}
+
+async function renderComponentTreePanel(container, bp, rootMaterials = null) {
   container.innerHTML = `
     <div id="ctrlBar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;
          padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);
@@ -413,16 +479,28 @@ async function renderComponentTreePanel(container, bp) {
     if (!out) return;
     out.innerHTML = `<div style="padding:12px;color:var(--text-3);">Building component tree…</div>`;
     try {
-      // We need the blueprint ID for the root product.
-      // bp.type_id IS the blueprint ID (from the library), so use it directly as root.
-      const tree = await buildRecursiveMaterialTree(bp.type_id, 1, 0, currentDepth, includeReactions);
+      // Use SDE materials as root if available (avoids Fuzzwork for capital/special BPs).
+      // Fall back to Fuzzwork for blueprints where we don't have root materials cached.
+      const tree = rootMaterials?.length
+        ? await buildTreeFromSdeMaterials(rootMaterials, currentDepth, includeReactions)
+        : await buildRecursiveMaterialTree(bp.type_id, 1, 0, currentDepth, includeReactions);
+
       if (!tree || tree.length === 0) {
         out.innerHTML = `<div style="padding:12px;color:var(--text-3);">
           No sub-components found — all materials are raw inputs.</div>`;
         return;
       }
+
       const flat = flattenTreeToLeaves(tree);
-      out.innerHTML = renderFlatMaterialList(flat, currentDepth);
+
+      // Fetch Jita prices for the flat leaf list
+      let leafPrices = {};
+      try {
+        const leafIds = [...flat.keys()];
+        if (leafIds.length) leafPrices = await window.eveAPI.getJitaPrices(leafIds) || {};
+      } catch (_) {}
+
+      out.innerHTML = renderFlatMaterialList(flat, currentDepth, leafPrices);
     } catch (e) {
       out.innerHTML = `<div style="padding:12px;color:var(--danger);">
         ⚠ Component tree error: ${escHtml(e.message)}</div>`;
@@ -452,9 +530,14 @@ async function renderComponentTreePanel(container, bp) {
   await rebuild();
 }
 
-// Renders a single material row with EVE icon + name + adjusted quantity
-function renderMaterialRow(mat) {
-  const isComponent = mat.isComponent;   // true = sub-component that can itself be manufactured
+// Renders a single material row with EVE icon, name, quantity, and optional Jita price
+function renderMaterialRow(mat, prices = {}) {
+  const isComponent = mat.isComponent;
+  const p           = prices[mat.typeId];
+  const unitPrice   = p?.sell > 0 ? p.sell : (p?.buy || 0);
+  const totalCost   = unitPrice * mat.adjustedQty;
+  const saved       = mat.baseQty - mat.adjustedQty;
+
   return `
     <div style="display:flex;align-items:center;gap:10px;padding:6px 10px;
                 border-radius:4px;
@@ -467,14 +550,22 @@ function renderMaterialRow(mat) {
                    font-family:var(--font);font-size:13px;font-weight:${isComponent ? '600' : '400'};">
         ${isComponent ? '◈ ' : ''}${escHtml(mat.name || `Type ${mat.typeId}`)}
       </span>
-      <span style="font-family:var(--mono);color:var(--text-2);font-size:12px;flex-shrink:0;">
+      <span style="font-family:var(--mono);color:var(--text-1);font-size:12px;
+                   font-weight:600;min-width:70px;text-align:right;flex-shrink:0;">
         ×${mat.adjustedQty.toLocaleString()}
+        ${saved > 0
+          ? `<span style="font-size:9px;color:var(--success);margin-left:3px;" title="ME saves ${saved.toLocaleString()}">−${saved.toLocaleString()}</span>`
+          : ''}
       </span>
-      ${mat.baseQty !== mat.adjustedQty
-        ? `<span style="font-family:var(--mono);color:var(--text-3);font-size:10px;text-decoration:line-through;flex-shrink:0;">
-             ${mat.baseQty.toLocaleString()}
-           </span>`
-        : ''}
+      <span style="font-family:var(--mono);color:var(--text-3);font-size:11px;
+                   min-width:100px;text-align:right;flex-shrink:0;">
+        ${unitPrice > 0 ? formatNumber(unitPrice) + ' ISK' : '—'}
+      </span>
+      <span style="font-family:var(--mono);font-size:11px;font-weight:${totalCost > 0 ? '600' : '400'};
+                   color:${totalCost > 0 ? 'var(--text-1)' : 'var(--text-3)'};
+                   min-width:110px;text-align:right;flex-shrink:0;">
+        ${totalCost > 0 ? formatNumber(totalCost) : '—'}
+      </span>
     </div>`;
 }
 
@@ -613,57 +704,88 @@ function flattenTreeToLeaves(nodes, accumulated = new Map()) {
   return accumulated;
 }
 
-// Render the flat (aggregated) shopping list as a clean table
-function renderFlatMaterialList(flatMap, depth) {
+// Render the flat (aggregated) shopping list as a clean table with Jita prices
+function renderFlatMaterialList(flatMap, depth, prices = {}) {
   if (!flatMap.size) return '<div style="padding:12px;color:var(--text-3);">No materials found.</div>';
 
   const rows = [...flatMap.values()].sort((a, b) => a.name.localeCompare(b.name));
 
   const depthLabel = depth === 99 ? 'Raw inputs (minerals / moon goo / PI)'
-                   : depth === 1  ? 'Capital components (T1 breakdown)'
-                   : depth === 2  ? 'Sub-components (T2 breakdown)'
+                   : depth === 1  ? 'T1 component breakdown'
+                   : depth === 2  ? 'T2 sub-component breakdown'
                    : `Tier ${depth} breakdown`;
+
+  let grandTotal = 0;
+  const renderedRows = rows.map(row => {
+    const p         = prices[row.typeid];
+    const unitPrice = p?.sell > 0 ? p.sell : (p?.buy || 0);
+    const rowTotal  = unitPrice * row.quantity;
+    if (rowTotal > 0) grandTotal += rowTotal;
+
+    const sourceLabel = row.isReaction
+      ? `<span style="color:#ab7ab8;font-size:10px;">⚗ REACT</span>`
+      : `<span style="color:var(--text-3);font-size:10px;">◈ MANUF</span>`;
+
+    return `
+      <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+        <td style="padding:7px 8px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <img src="https://images.evetech.net/types/${row.typeid}/icon?size=32"
+                 onerror="this.onerror=null;this.style.display='none';"
+                 style="width:22px;height:22px;border-radius:3px;border:1px solid var(--border);flex-shrink:0;">
+            <span style="color:var(--text-1);">${escHtml(row.name)}</span>
+          </div>
+        </td>
+        <td style="padding:7px 8px;text-align:right;color:var(--text-1);
+                   font-family:var(--mono);font-weight:600;white-space:nowrap;">
+          ${row.quantity.toLocaleString()}
+        </td>
+        <td style="padding:7px 8px;text-align:right;font-family:var(--mono);
+                   font-size:11px;color:var(--text-3);white-space:nowrap;">
+          ${unitPrice > 0 ? formatNumber(unitPrice) + ' ISK' : '—'}
+        </td>
+        <td style="padding:7px 8px;text-align:right;font-family:var(--mono);
+                   font-size:11px;font-weight:600;color:${rowTotal > 0 ? 'var(--text-1)' : 'var(--text-3)'};
+                   white-space:nowrap;">
+          ${rowTotal > 0 ? formatNumber(rowTotal) : '—'}
+        </td>
+        <td style="padding:7px 8px;text-align:center;">${sourceLabel}</td>
+      </tr>`;
+  }).join('');
 
   return `
     <div style="font-family:var(--mono);font-size:10px;color:var(--text-3);
-                letter-spacing:0.1em;margin-bottom:8px;padding:0 2px;">
+                letter-spacing:0.1em;margin-bottom:6px;padding:0 2px;">
       ${escHtml(depthLabel)} — ${rows.length} item${rows.length !== 1 ? 's' : ''} to source
     </div>
     <table style="width:100%;border-collapse:collapse;font-size:12px;">
       <thead>
         <tr style="border-bottom:1px solid var(--border);">
-          <th style="text-align:left;padding:6px 8px;color:var(--text-3);font-weight:500;
-                     font-family:var(--mono);font-size:10px;letter-spacing:0.08em;">ITEM</th>
-          <th style="text-align:right;padding:6px 8px;color:var(--text-3);font-weight:500;
-                     font-family:var(--mono);font-size:10px;letter-spacing:0.08em;">QTY NEEDED</th>
-          <th style="text-align:center;padding:6px 8px;color:var(--text-3);font-weight:500;
-                     font-family:var(--mono);font-size:10px;letter-spacing:0.08em;">SOURCE</th>
+          <th style="text-align:left;padding:6px 8px;font-family:var(--mono);font-size:9px;
+                     color:var(--text-3);font-weight:500;letter-spacing:0.08em;">ITEM</th>
+          <th style="text-align:right;padding:6px 8px;font-family:var(--mono);font-size:9px;
+                     color:var(--text-3);font-weight:500;letter-spacing:0.08em;">QTY</th>
+          <th style="text-align:right;padding:6px 8px;font-family:var(--mono);font-size:9px;
+                     color:var(--text-3);font-weight:500;letter-spacing:0.08em;">JITA SELL/UNIT</th>
+          <th style="text-align:right;padding:6px 8px;font-family:var(--mono);font-size:9px;
+                     color:var(--accent);font-weight:500;letter-spacing:0.08em;">TOTAL COST</th>
+          <th style="text-align:center;padding:6px 8px;font-family:var(--mono);font-size:9px;
+                     color:var(--text-3);font-weight:500;letter-spacing:0.08em;">SOURCE</th>
         </tr>
       </thead>
-      <tbody>
-        ${rows.map(row => {
-          const sourceLabel = row.isReaction
-            ? `<span style="color:#ab7ab8;font-size:10px;">⚗ REACT</span>`
-            : `<span style="color:var(--text-3);font-size:10px;">◈ MANUF</span>`;
-          return `
-            <tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
-              <td style="padding:7px 8px;display:flex;align-items:center;gap:8px;">
-                <img src="https://images.evetech.net/types/${row.typeid}/icon?size=32"
-                     onerror="this.onerror=null;this.style.display='none';"
-                     style="width:22px;height:22px;border-radius:3px;border:1px solid var(--border);flex-shrink:0;">
-                <span style="color:var(--text-1);">${escHtml(row.name)}</span>
-              </td>
-              <td style="padding:7px 8px;text-align:right;color:var(--text-1);
-                         font-family:var(--mono);font-weight:600;">
-                ${row.quantity.toLocaleString()}
-              </td>
-              <td style="padding:7px 8px;text-align:center;">
-                ${sourceLabel}
-              </td>
-            </tr>`;
-        }).join('')}
-      </tbody>
-    </table>`;
+      <tbody>${renderedRows}</tbody>
+    </table>
+    ${grandTotal > 0 ? `
+    <div style="margin-top:12px;padding:10px 14px;background:var(--bg-card);
+                border:1px solid var(--border);border-radius:6px;
+                display:flex;align-items:baseline;gap:12px;">
+      <span style="font-family:var(--mono);font-size:9px;color:var(--text-3);letter-spacing:0.12em;">
+        TOTAL MATERIAL COST (JITA SELL)
+      </span>
+      <span style="font-family:var(--mono);font-size:18px;font-weight:700;color:var(--accent);margin-left:auto;">
+        ${formatNumber(grandTotal)} ISK
+      </span>
+    </div>` : ''}`;
 }
 
 // Legacy tree HTML renderer (kept for renderTreeResults compatibility)

@@ -148,33 +148,91 @@ function registerEsiHandlers({
     return prices;
   });
 
-  // ─── IPC: Fuzzwork blueprint materials ───────────────────────────────────
+  // ─── IPC: Blueprint materials — SDE primary, Fuzzwork fallback ──────────────
+  // Returns { materials: [{ typeid, name, quantity }], blueprintTypeID }
   ipcHandle('get-blueprint-materials', async (_, typeId) => {
     if (bpCache[typeId]) return bpCache[typeId];
+
+    const sdeDb = getSdeDb();
+    if (sdeDb) {
+      // Try manufacturing (1) then reactions (11)
+      for (const activityID of [1, 11]) {
+        try {
+          const rows = await sdeDb.all(
+            `SELECT m.materialTypeID AS typeid, m.quantity,
+                    COALESCE(t.typeName, 'Type ' || m.materialTypeID) AS name
+               FROM industryActivityMaterials m
+               LEFT JOIN invTypes t ON t.typeID = m.materialTypeID
+              WHERE m.typeID = ? AND m.activityID = ?`,
+            typeId, activityID
+          );
+          if (rows.length) {
+            const data = { materials: rows, blueprintTypeID: typeId };
+            bpCache[typeId] = data;
+            return data;
+          }
+        } catch (_) {}
+      }
+    }
+
+    // Fuzzwork fallback (may 404 for newer/capital BPs)
     try {
       const data = await httpGet(`${FUZZWORK_BASE}/api/blueprint.php?typeid=${typeId}&runs=1&me=0&pe=0`);
       bpCache[typeId] = data;
       return data;
-    } catch (err) {
-      console.warn(`Blueprint ${typeId} not found in Fuzzwork, returning empty materials:`, err.message);
-      const emptyData    = { materials: [], blueprintTypeID: typeId };
-      bpCache[typeId]    = emptyData;
-      return emptyData;
-    }
+    } catch (_) {}
+
+    const emptyData = { materials: [], blueprintTypeID: typeId };
+    bpCache[typeId] = emptyData;
+    return emptyData;
   });
 
-  // ─── IPC: Find blueprint for a product (Fuzzwork) ────────────────────────
+  // ─── IPC: Find blueprint for a product — SDE primary, Fuzzwork fallback ──────
+  // Returns { [productTypeId]: { blueprintDetails: { blueprintTypeID, activityID } } }
   ipcHandle('find-bp-for-product', async (_, productTypeId) => {
     const key = `prod_${productTypeId}`;
     if (bpCache[key]) return bpCache[key];
+
+    const sdeDb = getSdeDb();
+    if (sdeDb) {
+      try {
+        // Prefer manufacturing (1) over reactions (11) over anything else
+        const row = await sdeDb.get(
+          `SELECT typeID AS blueprintTypeID, activityID
+             FROM industryActivityProducts
+            WHERE productTypeID = ?
+            ORDER BY CASE WHEN activityID = 1 THEN 0
+                          WHEN activityID = 11 THEN 1
+                          ELSE 2 END
+            LIMIT 1`,
+          productTypeId
+        );
+        if (row) {
+          const result = {
+            [productTypeId]: {
+              blueprintDetails: {
+                blueprintTypeID:    row.blueprintTypeID,
+                activityID:         row.activityID,
+                maxProductionLimit: 1,
+              }
+            }
+          };
+          bpCache[key] = result;
+          return result;
+        }
+      } catch (_) {}
+    }
+
+    // Fuzzwork fallback
     try {
-      const data  = await httpGet(`${FUZZWORK_BASE}/api/blueprint.php?producttypeid=${productTypeId}&runs=1&me=0&pe=0`);
+      const data = await httpGet(`${FUZZWORK_BASE}/api/blueprint.php?producttypeid=${productTypeId}&runs=1&me=0&pe=0`);
       bpCache[key] = data;
       return data;
-    } catch (err) {
-      console.warn(`No blueprint found for product ${productTypeId}:`, err.message);
-      return null;
-    }
+    } catch (_) {}
+
+    const noResult = { [productTypeId]: null };
+    bpCache[key] = noResult;
+    return noResult;
   });
 
   // ─── IPC: Get product typeId for a blueprint (SDE) ───────────────────────
