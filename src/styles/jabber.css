@@ -1,0 +1,113 @@
+/* ── Jabber page ─────────────────────────────────────────────────────────── */
+
+/* View / action button */
+.ping-view-btn {
+  padding: 2px 10px;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-25);
+  border-radius: var(--radius, 2px);
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.ping-view-btn:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.ping-view-btn--live,
+.ping-view-btn:disabled {
+  background: none;
+  border-color: var(--border);
+  color: var(--text-3);
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Columns toggle button */
+.jabber-cols-btn {
+  padding: 2px 8px;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 2px);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.jabber-cols-btn:hover,
+.jabber-cols-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* PAP type badges */
+.jpap-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-family: var(--mono);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  border-radius: var(--radius);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.jpap-stratop   { background: rgba(192,57,43,0.15);  color: #e05a4a; border: 1px solid rgba(192,57,43,0.35); }
+.jpap-peacetime { background: rgba(52,120,210,0.12); color: #6aabf7; border: 1px solid rgba(52,120,210,0.30); }
+.jpap-sig       { background: rgba(39,174,96,0.10);  color: #4ada8a; border: 1px solid rgba(39,174,96,0.28); }
+
+/* Column resize — th must be position:relative (set inline in template) */
+.jabber-th-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 8px;
+}
+
+/* Handle straddles the column border so it's easy to grab */
+.col-resize-handle {
+  position: absolute;
+  right: -4px;
+  top: 0;
+  height: 100%;
+  width: 9px;
+  cursor: col-resize;
+  user-select: none;
+  z-index: 10;
+}
+.col-resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 20%;
+  height: 60%;
+  width: 1px;
+  background: var(--border);
+  transition: background 0.12s;
+}
+.col-resize-handle:hover::after,
+.col-resize-handle.dragging::after {
+  background: var(--accent-40);
+}
+
+/* Cell overflow — works with table-layout:fixed */
+#jabberTable td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 0;
+}

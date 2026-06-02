@@ -248,6 +248,7 @@ const PAGE_HTML = {
 
   // ── Jabber ──────────────────────────────────────────────────────────────────
   jabber: `
+    <style id="jabberColVisStyle"></style>
     <div id="page-jabber" class="nav-page"
          style="flex-direction:column; height:100%; min-width:0; overflow:hidden;">
       <div class="page-header">
@@ -265,36 +266,45 @@ const PAGE_HTML = {
         <span id="jabberStatus" class="asset-summary">Connecting to Jabber...</span>
         <span style="flex:1;"></span>
         <span id="jabberSummary" class="asset-summary" style="white-space:nowrap;">0 pings</span>
+        <div style="position:relative;">
+          <button id="jabberColsBtn" class="jabber-cols-btn">Columns &#x25BE;</button>
+          <div id="jabberColsDropdown"
+               style="display:none; position:absolute; top:calc(100% + 4px); right:0; z-index:200;
+                      background:var(--bg-card); border:1px solid var(--border);
+                      border-radius:var(--radius); padding:8px 10px; min-width:130px;
+                      box-shadow:0 4px 16px rgba(0,0,0,0.5);">
+          </div>
+        </div>
       </div>
 
       <!-- Ping table -->
-      <div class="asset-table-wrapper" style="padding:0; flex:1; overflow-y:auto;">
-        <table id="jabberTable" class="asset-table ping-table" style="width:100%; table-layout:fixed;">
+      <div class="asset-table-wrapper" style="padding:0; flex:1; overflow-y:auto; overflow-x:auto;">
+        <table id="jabberTable" class="asset-table ping-table" style="width:100%; table-layout:fixed; min-width:600px;">
           <colgroup>
-            <col style="width:140px;"/>
-            <col style="width:110px;"/>
-            <col style="width:100px;"/>
-            <col style="width:80px;"/>
-            <col style="width:120px;"/>
-            <col style="width:80px;"/>
-            <col style="width:100px;"/>
-            <col style="width:100px;"/>
-            <col style="width:75px;"/>
-            <col style=""/>
-            <col style="width:70px;"/>
+            <col id="jcol-0" style="width:160px"/><!-- EVE Time -->
+            <col id="jcol-1" style="width:100px"/><!-- FC Name -->
+            <col id="jcol-2" style="width:120px"/><!-- Formup -->
+            <col id="jcol-3" style="width:90px"/> <!-- PAP Type -->
+            <col id="jcol-4" style="width:110px"/><!-- Doctrine -->
+            <col id="jcol-5" style="width:60px"/> <!-- SIG -->
+            <col id="jcol-6" style="width:110px"/><!-- Comms -->
+            <col id="jcol-7" style="width:90px"/> <!-- Pinged By -->
+            <col id="jcol-8" style="width:70px"/> <!-- Target -->
+            <col id="jcol-9" style="width:280px"/><!-- Message -->
+            <col id="jcol-10" style="width:62px"/><!-- View -->
           </colgroup>
           <thead>
             <tr>
-              <th>EVE Time</th>
-              <th>FC Name</th>
-              <th>Formup</th>
-              <th>PAP Type</th>
-              <th>Doctrine</th>
-              <th>Sig</th>
-              <th>Comms</th>
-              <th>Pinged By</th>
-              <th>Target</th>
-              <th>Message</th>
+              <th style="position:relative;"><span class="jabber-th-text">EVE Time</span></th>
+              <th style="position:relative;"><span class="jabber-th-text">FC Name</span></th>
+              <th style="position:relative;"><span class="jabber-th-text">Formup</span></th>
+              <th style="position:relative;"><span class="jabber-th-text">PAP Type</span></th>
+              <th style="position:relative;"><span class="jabber-th-text">Doctrine</span></th>
+              <th style="position:relative;"><span class="jabber-th-text">SIG</span></th>
+              <th style="position:relative;"><span class="jabber-th-text">Comms</span></th>
+              <th style="position:relative;"><span class="jabber-th-text">Pinged By</span></th>
+              <th style="position:relative;"><span class="jabber-th-text">Target</span></th>
+              <th style="position:relative;"><span class="jabber-th-text">Message</span></th>
               <th></th>
             </tr>
           </thead>

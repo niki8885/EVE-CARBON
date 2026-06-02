@@ -88,6 +88,174 @@ function jabberSortKey(row) {
   return row.eve_timecode || row.received_at || '';
 }
 
+// ── PAP badge ─────────────────────────────────────────────────────────────────
+
+function jabberPapBadge(papType) {
+  if (!papType) return '';
+  const clean = papType.trim();
+  const lower = clean.toLowerCase();
+  const cls = /stratop/.test(lower)   ? 'jpap-stratop'
+            : /peacetime/.test(lower) ? 'jpap-peacetime'
+            : 'jpap-sig';
+  return `<span class="jpap-badge ${cls}">${escHtml(clean.toUpperCase())}</span>`;
+}
+
+// ── Column visibility ─────────────────────────────────────────────────────────
+
+const JABBER_COL_NAMES = ['EVE Time','FC Name','Formup','PAP Type','Doctrine','SIG','Comms','Pinged By','Target','Message'];
+
+function jabberGetColVisibility() {
+  try {
+    const s = localStorage.getItem('jabberColVisibility');
+    if (s) {
+      const v = JSON.parse(s);
+      if (Array.isArray(v) && v.length === JABBER_COL_NAMES.length) return v;
+    }
+  } catch(e) {}
+  return JABBER_COL_NAMES.map(() => true);
+}
+
+function jabberApplyColVisibility(visible) {
+  const style = document.getElementById('jabberColVisStyle');
+  if (!style) return;
+  style.textContent = visible.map((v, i) => v ? '' :
+    `#jabberTable th:nth-child(${i+1}),#jabberTable td:nth-child(${i+1}){display:none}`
+  ).join('\n');
+}
+
+function jabberSaveColVisibility(visible) {
+  localStorage.setItem('jabberColVisibility', JSON.stringify(visible));
+  jabberApplyColVisibility(visible);
+}
+
+function jabberBuildColsDropdown() {
+  const dd = document.getElementById('jabberColsDropdown');
+  if (!dd) return;
+  const visible = jabberGetColVisibility();
+  dd.innerHTML = JABBER_COL_NAMES.map((name, i) => `
+    <label style="display:flex;align-items:center;gap:7px;padding:3px 0;cursor:pointer;
+                  font-family:var(--mono);font-size:10px;color:var(--text-3);white-space:nowrap;user-select:none;">
+      <input type="checkbox" ${visible[i] ? 'checked' : ''} data-col-idx="${i}"
+             style="accent-color:var(--accent);cursor:pointer;">
+      ${escHtml(name)}
+    </label>`).join('');
+  dd.querySelectorAll('input[data-col-idx]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const v = jabberGetColVisibility();
+      v[parseInt(cb.dataset.colIdx, 10)] = cb.checked;
+      jabberSaveColVisibility(v);
+    });
+  });
+}
+
+function initJabberColsToggle() {
+  const btn = document.getElementById('jabberColsBtn');
+  const dd  = document.getElementById('jabberColsDropdown');
+  if (!btn || !dd) return;
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = dd.style.display !== 'none';
+    dd.style.display = open ? 'none' : 'block';
+    btn.classList.toggle('active', !open);
+    if (!open) jabberBuildColsDropdown();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!btn.contains(e.target) && !dd.contains(e.target)) {
+      dd.style.display = 'none';
+      btn.classList.remove('active');
+    }
+  });
+
+  jabberApplyColVisibility(jabberGetColVisibility());
+}
+
+// ── Column resizing ───────────────────────────────────────────────────────────
+
+const JABBER_DEFAULT_WIDTHS = [160,100,120,80,110,60,110,90,70,280,62];
+
+function jabberGetColWidths() {
+  try {
+    const s = localStorage.getItem('jabberColWidths');
+    if (s) {
+      const w = JSON.parse(s);
+      if (Array.isArray(w) && w.length === 11) return w;
+    }
+  } catch(e) {}
+  return null;
+}
+
+function jabberSaveColWidths() {
+  const ths = document.querySelectorAll('#jabberTable thead th');
+  const widths = Array.from(ths).map(th => Math.round(th.getBoundingClientRect().width));
+  const table  = document.getElementById('jabberTable');
+  localStorage.setItem('jabberColWidths', JSON.stringify(widths));
+  if (table) localStorage.setItem('jabberTableWidth', table.style.width);
+}
+
+function jabberApplyColWidths(widths) {
+  widths.forEach((w, i) => {
+    const col = document.getElementById(`jcol-${i}`);
+    if (col && w > 0) col.style.width = w + 'px';
+  });
+  const savedTableW = localStorage.getItem('jabberTableWidth');
+  const table = document.getElementById('jabberTable');
+  if (table && savedTableW) table.style.width = savedTableW;
+}
+
+function initJabberColResize() {
+  const saved = jabberGetColWidths();
+  if (saved) jabberApplyColWidths(saved);
+
+  const ths = document.querySelectorAll('#jabberTable thead th');
+  ths.forEach((th, idx) => {
+    // Last column (View) has no resize handle
+    if (idx === ths.length - 1) return;
+
+    const handle = document.createElement('div');
+    handle.className = 'col-resize-handle';
+    th.appendChild(handle);
+
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const table       = document.getElementById('jabberTable');
+      const startX      = e.clientX;
+      const col         = document.getElementById(`jcol-${idx}`);
+      const startColW   = th.getBoundingClientRect().width;
+      const startTableW = table ? table.offsetWidth : 0;
+
+      // Freeze table to a pixel width — prevents width:100% from rescaling
+      // every other column when only one column should change.
+      if (table) table.style.width = startTableW + 'px';
+
+      handle.classList.add('dragging');
+      document.body.style.cursor    = 'col-resize';
+      document.body.style.userSelect = 'none';
+
+      const onMove = (ev) => {
+        const delta   = ev.clientX - startX;
+        const newColW = Math.max(30, startColW + delta);
+        const clampedDelta = newColW - startColW;
+        if (col)   col.style.width   = newColW + 'px';
+        // Grow/shrink the table by exactly the same delta so no other column shifts
+        if (table) table.style.width = (startTableW + clampedDelta) + 'px';
+      };
+      const onUp = () => {
+        handle.classList.remove('dragging');
+        document.body.style.cursor    = '';
+        document.body.style.userSelect = '';
+        jabberSaveColWidths();
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  });
+}
+
 // ── Render ────────────────────────────────────────────────────────────────────
 
 function renderJabberTable() {
@@ -115,18 +283,17 @@ function renderJabberTable() {
       : `<button class="ping-view-btn ping-view-btn--live" disabled title="Live ping — not yet stored">View</button>`;
 
     return `<tr title="${escHtml(row.raw_body || '')}">
-      <td style="font-family:var(--mono); font-size:11px; white-space:nowrap; min-width:140px;">${escHtml(row.eve_timecode || row.ping_timestamp || '')}</td>
-      <td style="white-space:normal; word-break:break-word;">${escHtml(row.fc_name       || '')}</td>
-      <td style="white-space:normal; word-break:break-word;">${escHtml(row.formup_location || '')}</td>
-      <td style="white-space:normal; word-break:break-word;">${escHtml(row.pap_type      || '')}</td>
-      <td style="white-space:normal; word-break:break-word;" title="${escHtml(row.doctrine || '')}">${escHtml(docShort)}</td>
-      <td style="white-space:normal; word-break:break-word;">${escHtml(row.sig           || '')}</td>
-      <td style="white-space:normal; word-break:break-word;">${escHtml(row.comms         || '')}</td>
-      <td style="white-space:normal; word-break:break-word;">${escHtml(row.gsol_member   || row.who_pinged || '')}</td>
-      <td style="white-space:normal; word-break:break-word;">${escHtml(row.target_sig    || '')}</td>
-      <td style="white-space:normal; word-break:break-word;"
-          title="${escHtml(row.hurf || '')}">${escHtml(row.hurf || row.raw_body || '')}</td>
-      <td style="text-align:center; white-space:nowrap;">${viewBtn}</td>
+      <td style="font-family:var(--mono);font-size:11px;">${escHtml(row.eve_timecode || row.ping_timestamp || '')}</td>
+      <td>${escHtml(row.fc_name       || '')}</td>
+      <td>${escHtml(row.formup_location || '')}</td>
+      <td style="overflow:visible;">${jabberPapBadge(row.pap_type)}</td>
+      <td title="${escHtml(row.doctrine || '')}">${escHtml(docShort)}</td>
+      <td>${escHtml(row.sig           || '')}</td>
+      <td>${escHtml(row.comms         || '')}</td>
+      <td>${escHtml(row.gsol_member   || row.who_pinged || '')}</td>
+      <td>${escHtml(row.target_sig    || '')}</td>
+      <td class="jabber-msg-cell" title="${escHtml(row.hurf || '')}">${escHtml(row.hurf || row.raw_body || '')}</td>
+      <td style="text-align:center;">${viewBtn}</td>
     </tr>`;
   }).join('');
 
@@ -238,6 +405,9 @@ async function autoConnectJabber() {
 // ── Event binding ─────────────────────────────────────────────────────────────
 
 function bindJabberEvents() {
+  initJabberColsToggle();
+  initJabberColResize();
+
   // Live messages from main process.
   // When the DB insert succeeded, the broadcast is a complete DB row (has
   // raw_body). When it fails, the broadcast is the raw XMPP msg (has body).
