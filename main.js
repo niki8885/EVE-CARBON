@@ -25,6 +25,7 @@ const { registerConfigHandlers }    = require('./src/ipc/config_ipc');
 const { registerPingFileHandlers }  = require('./src/ipc/ping_ipc');
 const { registerPIHandlers, syncPIForCharacter } = require('./src/ipc/pi_ipc');
 const { registerMapHandlers }       = require('./src/ipc/map_ipc');
+const { registerUpdaterHandlers }   = require('./src/ipc/updater_ipc');
 
 // Global reference to the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -225,6 +226,7 @@ function resolvePackFile(packId) {
 ipcMain.handle('open-external-url', (_, url) => {
   if (url && /^https?:\/\//i.test(url)) shell.openExternal(url);
 });
+ipcMain.handle('get-app-version', () => app.getVersion());
 
 app.whenReady().then(async () => {
   initPaths();
@@ -324,6 +326,7 @@ app.whenReady().then(async () => {
     writeCache,
     getSdeDb: () => sdeDb,
   });
+  registerUpdaterHandlers({ ipcHandle, app, loadConfig, saveConfig });
   // Jabber must register AFTER initPaths() so configPath is set, and AFTER
   // registerConfigHandlers() so app-get-config is available when jabber_ipc
   // reads saved credentials on startup.

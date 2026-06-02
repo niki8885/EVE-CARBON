@@ -37,6 +37,38 @@
   </div>
 </div>
 
+<!-- ── Update banner (hidden until update found) ────────────────────────── -->
+<div id="updateBanner" style="
+  display:none;
+  align-items:center;
+  justify-content:center;
+  gap:12px;
+  padding:8px 20px;
+  background:linear-gradient(90deg,#1a2a1a,#1e3a1e);
+  border-bottom:1px solid #2e6b2e;
+  font-size:13px;
+  flex-wrap:wrap;
+">
+  <span style="color:#6fcf6f; font-weight:600; letter-spacing:.03em;">⬡ UPDATE AVAILABLE</span>
+  <span id="updateBannerText" style="color:var(--text-2,#b0b0b0);"></span>
+  <div style="display:flex; gap:8px; flex-shrink:0;">
+    <button id="updateBannerDownloadBtn" style="
+      background:transparent; border:1.5px solid #6fcf6f; color:#6fcf6f;
+      border-radius:4px; padding:4px 14px; font-size:12px; font-weight:600;
+      cursor:pointer; letter-spacing:.04em;
+    ">Download Update</button>
+    <button id="updateBannerSkipBtn" style="
+      background:transparent; border:1.5px solid var(--text-3,#555); color:var(--text-3,#888);
+      border-radius:4px; padding:4px 14px; font-size:12px;
+      cursor:pointer;
+    ">Skip This Version</button>
+    <button id="updateBannerDismissBtn" style="
+      background:transparent; border:none; color:var(--text-3,#666);
+      font-size:16px; line-height:1; cursor:pointer; padding:0 4px;
+    " title="Dismiss">✕</button>
+  </div>
+</div>
+
 <!-- ── Main layout ───────────────────────────────────────────────────────── -->
 <div class="layout">
 
@@ -107,6 +139,14 @@
         <button id="openSettingsBtn" class="nav-btn" title="Open UI Settings">
           <span class="nav-icon">⚙</span>
           <span class="nav-label">Settings</span>
+        </button>
+        <button class="nav-btn" title="Support EVE Carbon with ISK/PLEX" onclick="openDonateModal()">
+          <span class="nav-icon">♥</span>
+          <span class="nav-label">Donate</span>
+        </button>
+        <button class="nav-btn" title="Credits &amp; Attributions" onclick="openAttributionsModal()">
+          <span class="nav-icon">ℹ</span>
+          <span class="nav-label">About</span>
         </button>
       </nav>
     </div>
@@ -696,6 +736,177 @@
       window.eveAPI.off('sde-update-progress', onProgress);
     }
   };
+})();
+</script>
+
+<!-- ── Donate Modal ──────────────────────────────────────────────────────────── -->
+<div id="donateBackdrop" class="modal-backdrop" style="display:none;" onclick="if(event.target===this)closeDonateModal()">
+  <div class="modal bug-modal" style="max-width:820px; width:90%;">
+    <div class="bug-modal-header">
+      <div class="bug-modal-header-left">
+        <span class="bug-modal-icon">♥</span>
+        <div>
+          <div class="bug-modal-title">SUPPORT EVE CARBON</div>
+          <div class="bug-modal-subtitle">Send ISK or PLEX in-game</div>
+        </div>
+      </div>
+      <button class="icon-btn bug-close-btn" onclick="closeDonateModal()" title="Close">✕</button>
+    </div>
+    <div style="padding:28px 36px 36px;">
+      <p style="color:var(--text-2); font-size:14px; line-height:1.7; margin:0 0 24px;">
+        EVE Carbon is free and open-source. If you find it useful, consider sending a donation in-game — any amount is greatly appreciated and helps keep the project alive!
+      </p>
+      <div style="background:var(--bg-2,#1e1e1e); border:1px solid var(--border); border-radius:8px; padding:24px 28px; display:flex; align-items:center; justify-content:space-between; gap:24px;">
+        <div>
+          <div style="font-size:12px; color:var(--text-3); text-transform:uppercase; letter-spacing:.08em; margin-bottom:8px;">Send ISK / PLEX to</div>
+          <div id="donateCharName" style="font-size:22px; font-weight:600; color:var(--text-1, #e0e0e0); font-family:monospace; letter-spacing:.02em;">Ms Moirai</div>
+        </div>
+        <button id="donateCopyBtn" onclick="copyDonateChar()" style="flex-shrink:0; font-size:13px; padding:10px 22px; background:transparent; border:2px solid var(--danger,#c94040); color:var(--danger,#c94040); border-radius:4px; cursor:pointer; font-weight:600; letter-spacing:.04em; transition:opacity .15s;">Copy Name</button>
+      </div>
+      <p style="color:var(--text-3); font-size:12px; line-height:1.6; margin:16px 0 0;">
+        In EVE: right-click any wallet → Give Money, or drag PLEX from your vault and send to the character above.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ── Attributions Modal ─────────────────────────────────────────────────────── -->
+<div id="attributionsBackdrop" class="modal-backdrop" style="display:none;" onclick="if(event.target===this)closeAttributionsModal()">
+  <div class="modal bug-modal" style="max-width:500px;">
+    <div class="bug-modal-header">
+      <div class="bug-modal-header-left">
+        <span class="bug-modal-icon">ℹ</span>
+        <div>
+          <div class="bug-modal-title">ABOUT EVE CARBON</div>
+          <div class="bug-modal-subtitle">Credits &amp; open-source attributions</div>
+        </div>
+      </div>
+      <button class="icon-btn bug-close-btn" onclick="closeAttributionsModal()" title="Close">✕</button>
+    </div>
+    <div style="padding:20px 24px 24px; overflow-y:auto; max-height:420px;">
+
+      <div style="margin-bottom:18px; display:flex; align-items:flex-start; justify-content:space-between; gap:16px;">
+        <div>
+          <div style="font-size:11px; color:var(--text-3); text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px;">Created by</div>
+          <div style="font-size:14px; color:var(--text-1);">Mia Christina Panayides</div>
+          <div style="font-size:12px; color:var(--text-3); margin-top:2px;">EVE Online character: Ms Moirai</div>
+        </div>
+        <div style="text-align:right; flex-shrink:0;">
+          <div style="font-size:11px; color:var(--text-3); text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px;">Version</div>
+          <div id="aboutAppVersion" style="font-size:14px; color:var(--text-1); font-family:monospace;">—</div>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--border); padding-top:16px; margin-bottom:18px;">
+        <div style="font-size:11px; color:var(--text-3); text-transform:uppercase; letter-spacing:.06em; margin-bottom:10px;">EVE Online</div>
+        <div style="font-size:13px; color:var(--text-2); line-height:1.6;">
+          EVE Online and all related assets are property of <strong style="color:var(--text-1);">CCP hf.</strong>
+          This tool uses the <strong style="color:var(--text-1);">EVE Swagger Interface (ESI)</strong> public API and the
+          <strong style="color:var(--text-1);">Static Data Export (SDE)</strong>.
+          EVE Carbon is not affiliated with or endorsed by CCP hf.
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--border); padding-top:16px;">
+        <div style="font-size:11px; color:var(--text-3); text-transform:uppercase; letter-spacing:.06em; margin-bottom:10px;">Special Thanks</div>
+        <table style="width:100%; border-collapse:collapse; font-size:12px; margin-bottom:18px;">
+          <tbody>
+            <tr><td style="padding:5px 0; color:var(--text-1); width:45%;">Fenris Creations</td><td style="color:var(--text-3);">Inspiration and foundational concepts</td></tr>
+            <tr><td style="padding:5px 0; color:var(--text-1);">Fuzzworks (Steve)</td><td style="color:var(--text-3);">Industry tools and market data reference</td></tr>
+            <tr><td style="padding:5px 0; color:var(--text-1);">RIFT Intel Fusion</td><td style="color:var(--text-3);">Intel tooling inspiration and support</td></tr>
+          </tbody>
+        </table>
+        <div style="font-size:11px; color:var(--text-3); text-transform:uppercase; letter-spacing:.06em; margin-bottom:10px;">Open-Source Libraries</div>
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+          <tbody id="attributionsTable">
+            <tr><td style="padding:5px 0; color:var(--text-1); width:45%;">Electron</td><td style="color:var(--text-3);">Desktop app framework — MIT</td></tr>
+            <tr><td style="padding:5px 0; color:var(--text-1);">@xmpp/client</td><td style="color:var(--text-3);">XMPP / Jabber client — ISC</td></tr>
+            <tr><td style="padding:5px 0; color:var(--text-1);">axios</td><td style="color:var(--text-3);">HTTP client — MIT</td></tr>
+            <tr><td style="padding:5px 0; color:var(--text-1);">sqlite / sqlite3</td><td style="color:var(--text-3);">Local database — MIT / BSD</td></tr>
+            <tr><td style="padding:5px 0; color:var(--text-1);">js-yaml</td><td style="color:var(--text-3);">YAML parser — MIT</td></tr>
+            <tr><td style="padding:5px 0; color:var(--text-1);">dotenv</td><td style="color:var(--text-3);">Environment config — BSD-2</td></tr>
+            <tr><td style="padding:5px 0; color:var(--text-1);">decompress</td><td style="color:var(--text-3);">Archive extraction — MIT</td></tr>
+            <tr><td style="padding:5px 0; color:var(--text-1);">electron-builder</td><td style="color:var(--text-3);">Installer packaging — MIT</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  function openDonateModal()       { document.getElementById('donateBackdrop').style.display = 'flex'; }
+  function closeDonateModal()      { document.getElementById('donateBackdrop').style.display = 'none'; }
+  function openAttributionsModal() {
+    document.getElementById('attributionsBackdrop').style.display = 'flex';
+    const vEl = document.getElementById('aboutAppVersion');
+    if (vEl && vEl.textContent === '—') {
+      window.eveAPI.getAppVersion().then(v => { if (vEl) vEl.textContent = `v${v}`; }).catch(() => {});
+    }
+  }
+  function closeAttributionsModal(){ document.getElementById('attributionsBackdrop').style.display = 'none'; }
+
+  function copyDonateChar() {
+    const name = document.getElementById('donateCharName').textContent.trim();
+    navigator.clipboard.writeText(name).then(() => {
+      const btn = document.getElementById('donateCopyBtn');
+      if (!btn) return;
+      const orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    });
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closeDonateModal(); closeAttributionsModal(); }
+  });
+
+  // ── Update banner logic ───────────────────────────────────────────────────
+  let _updateDownloadUrl = '';
+
+  function showUpdateBanner(latestVersion, currentVersion, downloadUrl) {
+    _updateDownloadUrl = downloadUrl;
+    const banner = document.getElementById('updateBanner');
+    const text   = document.getElementById('updateBannerText');
+    if (!banner) return;
+    if (text) text.textContent = `Version ${latestVersion} is available  (you have ${currentVersion})`;
+    banner.style.display = 'flex';
+  }
+
+  document.getElementById('updateBannerDownloadBtn')?.addEventListener('click', () => {
+    window.eveAPI.updaterOpenDownload(_updateDownloadUrl);
+  });
+
+  document.getElementById('updateBannerSkipBtn')?.addEventListener('click', async () => {
+    const text = document.getElementById('updateBannerText')?.textContent || '';
+    const match = text.match(/Version\s+(\S+)/);
+    if (match) await window.eveAPI.updaterSkipVersion(match[1]);
+    document.getElementById('updateBanner').style.display = 'none';
+  });
+
+  document.getElementById('updateBannerDismissBtn')?.addEventListener('click', () => {
+    document.getElementById('updateBanner').style.display = 'none';
+  });
+
+  // Check for updates ~8 seconds after launch so it doesn't block startup.
+  setTimeout(async () => {
+    try {
+      const result = await window.eveAPI.updaterCheck();
+      if (result?.hasUpdate) {
+        showUpdateBanner(result.latestVersion, result.currentVersion, result.downloadUrl);
+      }
+    } catch (e) {
+      console.warn('[updater] startup check failed:', e.message);
+    }
+  }, 8000);
+
+  window.openDonateModal       = openDonateModal;
+  window.closeDonateModal      = closeDonateModal;
+  window.openAttributionsModal = openAttributionsModal;
+  window.closeAttributionsModal = closeAttributionsModal;
+  window.copyDonateChar        = copyDonateChar;
 })();
 </script>
 

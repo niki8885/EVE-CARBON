@@ -118,6 +118,14 @@ contextBridge.exposeInMainWorld('eveAPI', {
   importPack:          ()       => ipcRenderer.invoke('import-pack'),
   deletePack:          (id)     => ipcRenderer.invoke('delete-pack', id),
 
+  // App metadata
+  getAppVersion:       ()       => ipcRenderer.invoke('get-app-version'),
+
+  // Updater
+  updaterCheck:        ()       => ipcRenderer.invoke('updater-check'),
+  updaterOpenDownload: (url)    => ipcRenderer.invoke('updater-open-download', url),
+  updaterSkipVersion:  (ver)    => ipcRenderer.invoke('updater-skip-version', ver),
+
   // Queries SDE for manufacturing materials and applies the ME bonus.
   // Returns { materials, productTypeId, productName, productQty } or null.
   sdeBlueprintMaterials: (blueprintTypeId, me) =>
