@@ -328,6 +328,59 @@ function registerEsiHandlers({
     return { materials, productTypeId, productName, productQty };
   });
 
+  // ─── IPC: SDE solar system name lookup (offline, no ESI needed) ─────────────
+  // Accepts solar_system_id values and returns { id: systemName }.
+  ipcHandle('sde-get-system-names', async (_, systemIds) => {
+    const sdeDb = getSdeDb();
+    if (!sdeDb || !systemIds?.length) return {};
+    const result = {};
+    const ph = systemIds.map(() => '?').join(',');
+    const tries = [
+      `SELECT solarSystemID AS id, solarSystemName AS name FROM mapSolarSystems WHERE solarSystemID IN (${ph})`,
+      `SELECT itemID        AS id, itemName        AS name FROM mapDenormalize  WHERE itemID        IN (${ph}) AND typeID = 5`,
+    ];
+    for (const q of tries) {
+      try {
+        const rows = await sdeDb.all(q, systemIds);
+        rows.forEach(r => { if (r.id && r.name) result[r.id] = r.name; });
+        if (Object.keys(result).length) break;
+      } catch (_) {}
+    }
+    return result;
+  });
+
+  // ─── IPC: Resolve solar system name from facility/station ID ─────────────────
+  // Used when solar_system_id = 0 (Upwell structures / some NPC stations).
+  // Looks up the NPC station in staStations then joins mapSolarSystems for the name.
+  // Returns { facilityId: solarSystemName }.
+  ipcHandle('sde-facility-to-system', async (_, facilityIds) => {
+    const sdeDb = getSdeDb();
+    if (!sdeDb || !facilityIds?.length) return {};
+    const result = {};
+    // Only NPC stations have IDs < 1_000_000_000 in the SDE
+    const npcIds = facilityIds.filter(id => id < 1_000_000_000);
+    if (!npcIds.length) return {};
+    const ph = npcIds.map(() => '?').join(',');
+    const tries = [
+      // SDE has staStations joined with mapSolarSystems
+      `SELECT s.stationID AS fid, m.solarSystemName AS name
+         FROM staStations s
+         JOIN mapSolarSystems m ON s.solarSystemID = m.solarSystemID
+        WHERE s.stationID IN (${ph})`,
+      // Fallback: just station name if join unavailable
+      `SELECT stationID AS fid, solarSystemName AS name FROM staStations WHERE stationID IN (${ph})`,
+      `SELECT stationID AS fid, stationName     AS name FROM staStations WHERE stationID IN (${ph})`,
+    ];
+    for (const q of tries) {
+      try {
+        const rows = await sdeDb.all(q, npcIds);
+        rows.forEach(r => { if (r.fid && r.name) result[r.fid] = r.name; });
+        if (Object.keys(result).length) break;
+      } catch (_) {}
+    }
+    return result;
+  });
+
   // ─── IPC: SDE blueprint search — only returns blueprint types (categoryID=9) ──
   ipcHandle('sde-search-types', async (_, query, limit = 15) => {
     const sdeDb = getSdeDb();

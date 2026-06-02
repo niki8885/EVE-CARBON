@@ -69,7 +69,9 @@ contextBridge.exposeInMainWorld('eveAPI', {
   getStationSyncTimestamp: (opts) => ipcRenderer.invoke('get-station-sync-timestamp', opts),
 
   // SDE
-  sdeGetName: (id) => ipcRenderer.invoke('sde-get-name', id),
+  sdeGetName:        (id)  => ipcRenderer.invoke('sde-get-name', id),
+  sdeGetSystemNames:    (ids) => ipcRenderer.invoke('sde-get-system-names', ids),
+  sdeFacilityToSystem:  (ids) => ipcRenderer.invoke('sde-facility-to-system', ids),
 
   // SDE update (runtime check + download + restart)
   sdeCheckUpdate:   ()   => ipcRenderer.invoke('sde-check-update'),

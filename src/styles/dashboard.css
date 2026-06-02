@@ -484,10 +484,16 @@
 }
 
 .active-jobs-summary {
+  display: flex;
+  align-items: center;
   font-size: 11px;
   color: var(--text-3);
   font-family: var(--mono);
   margin-bottom: 10px;
+}
+.active-jobs-summary #ajViewAllBtn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .active-jobs-scroll {
@@ -551,11 +557,11 @@
   border: 1px solid currentColor;
 }
 .aj-act-1  { color: #4ecbb0; background: rgba(78,203,176,0.08);  border-color: rgba(78,203,176,0.3);  } /* Manufacturing */
-.aj-act-3,
-.aj-act-4  { color: #4a9fd4; background: rgba(74,159,212,0.08);  border-color: rgba(74,159,212,0.3);  } /* TE/ME Research */
-.aj-act-5  { color: #9b59b6; background: rgba(155,89,182,0.08);  border-color: rgba(155,89,182,0.3);  } /* Copy */
-.aj-act-8  { color: #f39c12; background: rgba(243,156,18,0.08);  border-color: rgba(243,156,18,0.3);  } /* Invention */
-.aj-act-7  { color: #e67e22; background: rgba(230,126,34,0.08);  border-color: rgba(230,126,34,0.3);  } /* Reverse Eng. */
+.aj-act-3  { color: #4a9fd4; background: rgba(74,159,212,0.08);  border-color: rgba(74,159,212,0.3);  } /* TE Research   */
+.aj-act-4  { color: #ab7ab8; background: rgba(171,122,184,0.08); border-color: rgba(171,122,184,0.3); } /* ME Research   */
+.aj-act-5  { color: #9b59b6; background: rgba(155,89,182,0.08);  border-color: rgba(155,89,182,0.3);  } /* Copy         */
+.aj-act-7  { color: #c0392b; background: rgba(192,57,43,0.08);   border-color: rgba(192,57,43,0.3);   } /* Reverse Eng. */
+.aj-act-8  { color: #f39c12; background: rgba(243,156,18,0.08);  border-color: rgba(243,156,18,0.3);  } /* Invention    */
 
 /* Progress bar */
 .aj-progress-wrap {

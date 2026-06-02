@@ -931,6 +931,27 @@ async function renderActiveJobsWidget(container, jobs, accounts) {
   )];
   const typeNames = await _resolveTypeNames(typeIds);
 
+  // Resolve system names: SDE offline lookup, then facility fallback for solar_system_id = 0
+  const sysIds = [...new Set(jobs.map(j => j.solar_system_id).filter(Boolean))];
+  let sysNames = {};
+  if (sysIds.length) {
+    try { sysNames = await window.eveAPI.sdeGetSystemNames(sysIds) || {}; } catch (_) {}
+    const missing = sysIds.filter(id => !sysNames[id]);
+    if (missing.length) {
+      try {
+        const m = await window.eveAPI.resolveSystemNames(missing) || {};
+        Object.assign(sysNames, m);
+      } catch (_) {}
+    }
+  }
+  const facilityIds = [...new Set(
+    jobs.filter(j => !j.solar_system_id && j.facility_id).map(j => j.facility_id)
+  )];
+  let facilityToSys = {};
+  if (facilityIds.length) {
+    try { facilityToSys = await window.eveAPI.sdeFacilityToSystem(facilityIds) || {}; } catch (_) {}
+  }
+
   const now = Date.now();
 
   // Sort: active first (by end_date asc), then ready, then paused
@@ -945,7 +966,9 @@ async function renderActiveJobsWidget(container, jobs, accounts) {
     const charName   = accountMap[String(job.character_id)]?.characterName || `Char ${job.character_id}`;
     const itemTypeId = job.product_type_id || job.blueprint_type_id || null;
     const itemName   = (itemTypeId && typeNames[itemTypeId]) || (itemTypeId ? `Type ${itemTypeId}` : 'Unknown');
-    const sysName    = job.solar_system_name || (job.solar_system_id ? `System ${job.solar_system_id}` : '—');
+    const sysName    = (job.solar_system_id && sysNames[job.solar_system_id])
+                    || (job.facility_id    && facilityToSys[job.facility_id])
+                    || (job.solar_system_id ? `System ${job.solar_system_id}` : '—');
     const act        = _AJ_ACTIVITY[job.activity_id] || { label: `Activity ${job.activity_id}`, cls: '' };
 
     // Same 3-step fallback as finished-jobs: 64px icon → 32px icon → bp image → hide
@@ -995,15 +1018,20 @@ async function renderActiveJobsWidget(container, jobs, accounts) {
       <td class="aj-cell-item">${itemIcon}<span>${escHtml(itemName)}</span></td>
       <td><span class="aj-activity-badge ${act.cls}">${act.label}</span></td>
       ${progressCell}
-      <td style="color:var(--text-3);font-size:11px;white-space:nowrap;">${job.runs ?? 1}×</td>
-      <td style="color:var(--text-3);font-size:11px;white-space:nowrap;">${escHtml(sysName)}</td>
     </tr>`;
   }).join('');
 
   const charCount = new Set(jobs.map(j => String(j.character_id))).size;
   container.innerHTML = `
     <div class="active-jobs-summary">
-      ${jobs.length} job${jobs.length !== 1 ? 's' : ''} · ${charCount} character${charCount !== 1 ? 's' : ''}
+      <span>${jobs.length} job${jobs.length !== 1 ? 's' : ''} · ${charCount} character${charCount !== 1 ? 's' : ''}</span>
+      <button id="ajViewAllBtn" style="
+        margin-left:auto;padding:2px 10px;font-family:var(--mono);font-size:10px;
+        background:transparent;border:1px solid var(--border);border-radius:3px;
+        color:var(--text-3);cursor:pointer;letter-spacing:0.06em;
+        transition:color 0.15s,border-color 0.15s;">
+        VIEW ALL ›
+      </button>
     </div>
     <div class="active-jobs-scroll">
       <table class="active-jobs-list">
@@ -1013,13 +1041,16 @@ async function renderActiveJobsWidget(container, jobs, accounts) {
             <th>ITEM</th>
             <th>ACTIVITY</th>
             <th>PROGRESS</th>
-            <th>RUNS</th>
-            <th>SYSTEM</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+
+  document.getElementById('ajViewAllBtn')?.addEventListener('click', () => {
+    if (typeof navigateToPage    === 'function') navigateToPage('industry');
+    if (typeof navigateIndustryTab === 'function') navigateIndustryTab('active-jobs');
+  });
 }
 
 // ─── Alliance-space incursion alert widget ────────────────────────────────────

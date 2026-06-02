@@ -824,9 +824,12 @@ function navigateIndustryTab(tab) {
   } else if (tab === 'gas') {
     renderGasCalculator(right);
 
+  } else if (tab === 'active-jobs') {
+    renderActiveJobsPage(right);
+
   } else {
     const labels = {
-      'active-jobs': 'Active Jobs', 'calculator': 'Blueprint Calculator',
+      'calculator': 'Blueprint Calculator',
       'shopping-lists': 'Shopping Lists',
       'invention': 'Invention Buddy', 'reactions': 'Reactions Profit',
       'moon': 'Moon Scanning Reformatter',
@@ -838,6 +841,407 @@ function navigateIndustryTab(tab) {
         <div class="empty-sub">Coming soon.</div>
       </div>`;
   }
+}
+
+// ─── Active Jobs Page ─────────────────────────────────────────────────────────
+
+const _AJ_ACT = {
+  1: { label: 'Manufacturing', color: '#4ecbb0' },
+  3: { label: 'TE Research',   color: '#4a9fd4' },
+  4: { label: 'ME Research',   color: '#ab7ab8' },
+  5: { label: 'BP Copy',       color: '#9b59b6' },
+  7: { label: 'Reverse Eng.',  color: '#c0392b' },
+  8: { label: 'Invention',     color: '#f39c12' },
+};
+
+let _ajRefreshTimer = null;
+
+function _ajFmtTime(ms) {
+  if (ms <= 0) return 'Done';
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m ${s % 60}s`;
+}
+
+function _ajFmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+async function renderActiveJobsPage(container) {
+  if (_ajRefreshTimer) { clearInterval(_ajRefreshTimer); _ajRefreshTimer = null; }
+
+  container.innerHTML = `
+    <div style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
+      <!-- toolbar -->
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+                  padding:12px 18px;border-bottom:1px solid var(--border);
+                  background:var(--bg-card);flex-shrink:0;">
+        <span style="font-family:var(--mono);font-size:11px;color:var(--text-3);
+                     letter-spacing:0.1em;">ACTIVE INDUSTRY JOBS</span>
+        <span id="ajJobCount" style="font-family:var(--mono);font-size:11px;
+               color:var(--text-2);"></span>
+        <div style="display:flex;gap:6px;margin-left:auto;">
+          <select id="ajFilterActivity" class="field-input"
+                  style="width:150px;padding:4px 8px;font-size:11px;">
+            <option value="">All Activities</option>
+            ${Object.entries(_AJ_ACT).map(([id, a]) =>
+              `<option value="${id}">${a.label}</option>`).join('')}
+          </select>
+          <select id="ajFilterChar" class="field-input"
+                  style="width:150px;padding:4px 8px;font-size:11px;">
+            <option value="">All Characters</option>
+          </select>
+          <button id="ajRefreshBtn" class="icon-btn"
+                  style="padding:4px 12px;font-size:11px;">⟳ REFRESH</button>
+        </div>
+      </div>
+      <!-- table body -->
+      <div style="flex:1;overflow-y:auto;min-height:0;">
+        <table id="ajTable" style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="background:var(--bg-card);border-bottom:2px solid var(--border);
+                       position:sticky;top:0;z-index:1;">
+              <th class="aj-th" data-col="char"
+                  style="text-align:left;padding:10px 14px;font-family:var(--mono);
+                         font-size:10px;color:var(--text-3);letter-spacing:0.1em;
+                         cursor:pointer;white-space:nowrap;">CHARACTER ↕</th>
+              <th style="text-align:left;padding:10px 8px;font-family:var(--mono);
+                         font-size:10px;color:var(--text-3);letter-spacing:0.1em;">ITEM</th>
+              <th style="text-align:left;padding:10px 8px;font-family:var(--mono);
+                         font-size:10px;color:var(--text-3);letter-spacing:0.1em;">ACTIVITY</th>
+              <th class="aj-th" data-col="progress"
+                  style="text-align:left;padding:10px 14px;font-family:var(--mono);
+                         font-size:10px;color:var(--accent);letter-spacing:0.1em;
+                         cursor:pointer;white-space:nowrap;min-width:180px;">PROGRESS ↕</th>
+              <th class="aj-th" data-col="end"
+                  style="text-align:left;padding:10px 8px;font-family:var(--mono);
+                         font-size:10px;color:var(--text-3);letter-spacing:0.1em;
+                         cursor:pointer;white-space:nowrap;">ENDS ↕</th>
+              <th class="aj-th" data-col="runs"
+                  style="text-align:right;padding:10px 8px;font-family:var(--mono);
+                         font-size:10px;color:var(--text-3);letter-spacing:0.1em;
+                         cursor:pointer;">RUNS ↕</th>
+              <th class="aj-th" data-col="cost"
+                  style="text-align:right;padding:10px 14px;font-family:var(--mono);
+                         font-size:10px;color:var(--text-3);letter-spacing:0.1em;
+                         cursor:pointer;">COST ↕</th>
+              <th style="text-align:left;padding:10px 8px;font-family:var(--mono);
+                         font-size:10px;color:var(--text-3);letter-spacing:0.1em;">SYSTEM</th>
+            </tr>
+          </thead>
+          <tbody id="ajTableBody">
+            <tr><td colspan="8" style="text-align:center;padding:60px;
+                font-family:var(--mono);font-size:12px;color:var(--text-3);">
+              ⬡ Loading jobs…
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+
+  let _ajAllJobs   = [];
+  let _ajSort      = { col: 'progress', dir: 1 };
+  let _ajActFilter = '';
+  let _ajCharFilter = '';
+
+  async function loadJobs() {
+    const btn = document.getElementById('ajRefreshBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⟳ LOADING…'; }
+
+    try {
+      const accounts = await window.eveAPI.getAccounts();
+      if (!accounts?.length) {
+        document.getElementById('ajTableBody').innerHTML = `
+          <tr><td colspan="8" style="text-align:center;padding:60px;
+              font-family:var(--mono);font-size:12px;color:var(--text-3);">
+            No characters synced.
+          </td></tr>`;
+        return;
+      }
+
+      // Populate character filter
+      const charSel = document.getElementById('ajFilterChar');
+      if (charSel) {
+        charSel.innerHTML = '<option value="">All Characters</option>'
+          + accounts.map(a =>
+              `<option value="${a.characterId}">${escHtml(a.characterName || a.characterId)}</option>`
+            ).join('');
+      }
+
+      // Fetch jobs from all characters concurrently
+      // character_id is NOT in the ESI response body — must be injected from the request context
+      const allRaw = [];
+      await Promise.allSettled(accounts.map(async acc => {
+        try {
+          const jobs = await window.eveAPI.getCharacterActiveJobs(acc.characterId);
+          if (Array.isArray(jobs)) {
+            jobs.forEach(j => allRaw.push({
+              ...j,
+              character_id: acc.characterId,
+              _charName:    acc.characterName || `Char ${acc.characterId}`,
+            }));
+          }
+        } catch (_) {}
+      }));
+
+      // Resolve type names for all blueprint + product IDs
+      const typeIds = [...new Set(
+        allRaw.flatMap(j => [j.blueprint_type_id, j.product_type_id].filter(Boolean))
+      )];
+      const nameMap = {};
+      if (typeIds.length) {
+        try {
+          const arr = await window.eveAPI.getNames(typeIds);
+          if (Array.isArray(arr)) arr.forEach(e => { if (e.id && e.name) nameMap[e.id] = e.name; });
+        } catch (_) {}
+        // SDE fallback for any still-missing
+        await Promise.allSettled(typeIds.filter(id => !nameMap[id]).map(async id => {
+          try { const n = await window.eveAPI.sdeGetName(id); if (n) nameMap[id] = n; } catch (_) {}
+        }));
+      }
+
+      const activeRaw = allRaw.filter(j => ['active','ready','paused'].includes(j.status));
+
+      // Resolve system names via SDE (offline, no ESI dependency)
+      const sysIds = [...new Set(activeRaw.map(j => j.solar_system_id).filter(Boolean))];
+      let sysNames = {};
+      if (sysIds.length) {
+        try { sysNames = await window.eveAPI.sdeGetSystemNames(sysIds) || {}; } catch (_) {}
+        // ESI top-up for any SDE gaps
+        const missing = sysIds.filter(id => !sysNames[id]);
+        if (missing.length) {
+          try {
+            const esiMap = await window.eveAPI.resolveSystemNames(missing) || {};
+            Object.assign(sysNames, esiMap);
+          } catch (_) {}
+        }
+      }
+
+      // Fallback: jobs where solar_system_id = 0 → resolve via facility_id (NPC stations in SDE)
+      const facilityIds = [...new Set(
+        activeRaw.filter(j => !j.solar_system_id && j.facility_id).map(j => j.facility_id)
+      )];
+      let facilityToSys = {};
+      if (facilityIds.length) {
+        try { facilityToSys = await window.eveAPI.sdeFacilityToSystem(facilityIds) || {}; } catch (_) {}
+      }
+
+      _ajAllJobs = activeRaw.map(j => ({
+        ...j,
+        _bpName:     nameMap[j.blueprint_type_id] || `Type ${j.blueprint_type_id}`,
+        _prodName:   j.product_type_id ? (nameMap[j.product_type_id] || `Type ${j.product_type_id}`) : null,
+        _displayId:  j.product_type_id || j.blueprint_type_id,
+        _systemName: (j.solar_system_id && sysNames[j.solar_system_id])
+                  || (j.facility_id    && facilityToSys[j.facility_id])
+                  || (j.solar_system_id ? `System ${j.solar_system_id}` : null)
+                  || '—',
+      }));
+
+      renderAJTable();
+    } catch (err) {
+      console.error('[ActiveJobs]', err);
+      document.getElementById('ajTableBody').innerHTML = `
+        <tr><td colspan="8" style="text-align:center;padding:60px;
+            font-family:var(--mono);font-size:12px;color:var(--danger);">
+          ⚠ Failed to load jobs: ${escHtml(err.message)}
+        </td></tr>`;
+    } finally {
+      const btn2 = document.getElementById('ajRefreshBtn');
+      if (btn2) { btn2.disabled = false; btn2.textContent = '⟳ REFRESH'; }
+    }
+  }
+
+  function renderAJTable() {
+    const body     = document.getElementById('ajTableBody');
+    const countEl  = document.getElementById('ajJobCount');
+    if (!body) return;
+
+    const now = Date.now();
+    let jobs = _ajAllJobs.slice();
+
+    // Filters
+    if (_ajActFilter) jobs = jobs.filter(j => String(j.activity_id) === _ajActFilter);
+    if (_ajCharFilter) jobs = jobs.filter(j => String(j.character_id) === _ajCharFilter);
+
+    // Sort
+    const statusOrder = { active: 0, ready: 1, paused: 2 };
+    jobs.sort((a, b) => {
+      const d = _ajSort.dir;
+      if (_ajSort.col === 'char')     return d * a._charName.localeCompare(b._charName);
+      if (_ajSort.col === 'runs')     return d * ((a.runs ?? 1) - (b.runs ?? 1));
+      if (_ajSort.col === 'cost')     return d * ((a.cost ?? 0) - (b.cost ?? 0));
+      if (_ajSort.col === 'end') {
+        return d * (new Date(a.end_date || 0) - new Date(b.end_date || 0));
+      }
+      // Default: progress (time remaining asc, ready last)
+      const oa = statusOrder[a.status] ?? 3, ob = statusOrder[b.status] ?? 3;
+      if (oa !== ob) return d * (oa - ob);
+      return d * (new Date(a.end_date || 0) - new Date(b.end_date || 0));
+    });
+
+    if (countEl) {
+      const chars = new Set(jobs.map(j => j.character_id)).size;
+      countEl.textContent = jobs.length
+        ? `${jobs.length} job${jobs.length !== 1 ? 's' : ''} · ${chars} character${chars !== 1 ? 's' : ''}`
+        : '';
+    }
+
+    if (!jobs.length) {
+      body.innerHTML = `
+        <tr><td colspan="8" style="text-align:center;padding:60px;
+            font-family:var(--mono);font-size:12px;color:var(--text-3);">
+          ⬡ No active industry jobs.
+        </td></tr>`;
+      return;
+    }
+
+    body.innerHTML = jobs.map(job => {
+      const act       = _AJ_ACT[job.activity_id] || { label: `Act ${job.activity_id}`, color: 'var(--text-3)' };
+      const itemId    = job._displayId;
+      const icon64    = `https://images.evetech.net/types/${itemId}/icon?size=64`;
+      const icon32    = `https://images.evetech.net/types/${itemId}/icon?size=32`;
+      const iconBp    = `https://images.evetech.net/types/${itemId}/bp?size=32`;
+
+      const itemIcon = itemId
+        ? `<img src="${icon64}" style="width:26px;height:26px;border-radius:3px;
+                    border:1px solid var(--border);flex-shrink:0;background:var(--bg-deep);"
+               onerror="if(this.src==='${icon64}'){this.src='${icon32}'}else if(this.src==='${icon32}'){this.src='${iconBp}'}else{this.style.display='none'}">`
+        : '';
+
+      const charPortrait = `<img src="https://images.evetech.net/characters/${job.character_id}/portrait?size=32"
+        style="width:22px;height:22px;border-radius:3px;border:1px solid var(--border);flex-shrink:0;"
+        onerror="this.style.display='none'">`;
+
+      // Item cell: bp name + arrow + product name (for mfg/invention)
+      const nameDisplay = job._prodName && job._prodName !== job._bpName
+        ? `<span style="color:var(--text-1);">${escHtml(job._prodName)}</span>
+           <span style="font-size:10px;color:var(--text-3);font-family:var(--mono);display:block;">
+             from ${escHtml(job._bpName)}
+           </span>`
+        : `<span style="color:var(--text-1);">${escHtml(job._bpName)}</span>`;
+
+      // Progress cell
+      let progressCell;
+      if (job.status === 'ready') {
+        progressCell = `
+          <td style="padding:10px 14px;">
+            <span style="font-family:var(--mono);font-size:11px;font-weight:700;
+                         color:var(--success);letter-spacing:0.05em;">✓ READY TO DELIVER</span>
+          </td>`;
+      } else if (job.status === 'paused') {
+        progressCell = `
+          <td style="padding:10px 14px;">
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text-3);">⏸ PAUSED</span>
+          </td>`;
+      } else {
+        const start = new Date(job.start_date).getTime();
+        const end   = new Date(job.end_date).getTime();
+        const pct   = Math.min(100, Math.max(0, ((now - start) / (end - start)) * 100));
+        const left  = Math.max(0, end - now);
+        const fillCol = pct >= 90 ? '#4ecbb0' : pct >= 50 ? 'var(--accent)' : '#c0392b';
+        progressCell = `
+          <td style="padding:10px 14px;">
+            <div style="display:flex;flex-direction:column;gap:4px;">
+              <div style="height:5px;background:var(--bg-card);border-radius:3px;
+                          overflow:hidden;min-width:140px;">
+                <div style="height:100%;width:${pct.toFixed(1)}%;background:${fillCol};
+                            border-radius:3px;transition:width 0.3s;"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:baseline;">
+                <span style="font-family:var(--mono);font-size:10px;color:var(--text-2);">
+                  ${_ajFmtTime(left)} left
+                </span>
+                <span style="font-family:var(--mono);font-size:9px;color:var(--text-3);">
+                  ${pct.toFixed(0)}%
+                </span>
+              </div>
+            </div>
+          </td>`;
+      }
+
+      const endDate = job.status === 'ready'
+        ? `<td style="padding:10px 8px;font-family:var(--mono);font-size:10px;
+                      color:var(--success);">Completed</td>`
+        : `<td style="padding:10px 8px;font-family:var(--mono);font-size:10px;
+                      color:var(--text-3);white-space:nowrap;">${_ajFmtDate(job.end_date)}</td>`;
+
+      const costCell = job.cost > 0
+        ? `<td style="padding:10px 14px;text-align:right;font-family:var(--mono);
+                      font-size:11px;color:var(--text-2);">${formatNumber(job.cost)}</td>`
+        : `<td style="padding:10px 14px;text-align:right;font-family:var(--mono);
+                      font-size:11px;color:var(--text-3);">—</td>`;
+
+      const probBadge = job.probability != null && job.activity_id === 8
+        ? `<span style="font-family:var(--mono);font-size:9px;color:var(--text-3);
+                        margin-left:4px;">${(job.probability * 100).toFixed(0)}%</span>`
+        : '';
+
+      return `<tr style="border-bottom:1px solid var(--border);">
+        <td style="padding:10px 14px;white-space:nowrap;">
+          <div style="display:flex;align-items:center;gap:7px;">
+            ${charPortrait}
+            <span style="color:var(--text-1);font-size:12px;">${escHtml(job._charName)}</span>
+          </div>
+        </td>
+        <td style="padding:10px 8px;max-width:260px;">
+          <div style="display:flex;align-items:flex-start;gap:8px;">
+            ${itemIcon}
+            <div>${nameDisplay}</div>
+          </div>
+        </td>
+        <td style="padding:10px 8px;white-space:nowrap;">
+          <span style="display:inline-block;padding:2px 9px;border-radius:3px;
+                       font-family:var(--mono);font-size:10px;font-weight:700;
+                       background:${act.color}22;color:${act.color};
+                       border:1px solid ${act.color}44;">
+            ${act.label}
+          </span>
+          ${probBadge}
+        </td>
+        ${progressCell}
+        ${endDate}
+        <td style="padding:10px 8px;text-align:right;font-family:var(--mono);
+                   font-size:11px;color:var(--text-2);">${(job.runs ?? 1).toLocaleString()}×</td>
+        ${costCell}
+        <td style="padding:10px 8px;font-family:var(--mono);font-size:11px;
+                   color:var(--text-3);white-space:nowrap;">
+          ${escHtml(job._systemName || '—')}
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  // ── Wire controls ────────────────────────────────────────────────────────────
+  container.addEventListener('change', e => {
+    if (e.target.id === 'ajFilterActivity') { _ajActFilter  = e.target.value; renderAJTable(); }
+    if (e.target.id === 'ajFilterChar')     { _ajCharFilter = e.target.value; renderAJTable(); }
+  });
+
+  container.addEventListener('click', e => {
+    const th = e.target.closest('.aj-th');
+    if (th) {
+      const col = th.dataset.col;
+      if (_ajSort.col === col) _ajSort.dir *= -1;
+      else { _ajSort.col = col; _ajSort.dir = 1; }
+      renderAJTable();
+    }
+    if (e.target.closest('#ajRefreshBtn')) loadJobs();
+  });
+
+  // ── Auto-refresh progress bars every 30s ─────────────────────────────────────
+  _ajRefreshTimer = setInterval(() => {
+    if (document.getElementById('ajTableBody')) renderAJTable();
+    else { clearInterval(_ajRefreshTimer); _ajRefreshTimer = null; }
+  }, 30000);
+
+  await loadJobs();
 }
 
 // ─── Stubs (prevent crashes) ──────────────────────────────────────────────────
