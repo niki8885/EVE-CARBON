@@ -431,6 +431,76 @@
       box-shadow: 0 0 10px rgba(192, 57, 43, 0.25);
     }
 
+    /* ── Formup nav button ── */
+    .formup-nav-btn {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: var(--font);
+      letter-spacing: 0.02em;
+      padding: 2px 8px;
+      border-radius: var(--radius);
+      background: rgba(148,103,210,0.12);
+      color: #c39ff5;
+      border: 1px solid rgba(148,103,210,0.32);
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      -webkit-app-region: no-drag;
+    }
+    .formup-nav-btn:hover:not(:disabled) {
+      background: rgba(148,103,210,0.25);
+      border-color: rgba(148,103,210,0.55);
+      color: #d8beff;
+    }
+    .formup-nav-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .formup-nav-btn.done { color: #4ada8a; border-color: rgba(39,174,96,0.40); background: rgba(39,174,96,0.10); }
+    .formup-nav-btn.err  { color: #e05a4a; border-color: rgba(192,57,43,0.40); background: rgba(192,57,43,0.10); }
+
+    /* ── FC portrait ── */
+    .fc-portrait {
+      width: 33px;
+      height: 33px;
+      border-radius: 50%;
+      border: 1px solid rgba(192,57,43,0.40);
+      object-fit: cover;
+      flex-shrink: 0;
+      display: none; /* hidden until loaded */
+      background: rgba(255,255,255,0.04);
+    }
+    .fc-portrait.loaded { display: block; }
+    #fcNameRow { display: flex; align-items: center; gap: 8px; }
+
+    /* ── Join button ── */
+    .join-btn {
+      -webkit-app-region: no-drag;
+      padding: 5px 16px;
+      background: rgba(0,150,136,0.12);
+      border: 1px solid rgba(0,150,136,0.35);
+      border-radius: var(--radius);
+      color: #4dd0c4;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.15s;
+      min-width: 60px;
+    }
+    .join-btn:hover:not(:disabled) {
+      background: rgba(0,150,136,0.25);
+      border-color: #4dd0c4;
+      color: #fff;
+      box-shadow: 0 0 10px rgba(0,150,136,0.20);
+    }
+    .join-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .join-btn.ok   { color: #4dd0c4; border-color: rgba(0,150,136,0.55); }
+    .join-btn.fail { color: var(--warning); border-color: var(--warning); }
+
     /* PAP type badge */
     .pap-badge {
       display: inline-block;
@@ -488,11 +558,16 @@
     <div class="fields-grid">
       <div class="field">
         <span class="field-label">FC Name</span>
-        <span class="field-value highlight" id="fcName">—</span>
+        <span class="field-value highlight" id="fcNameRow">
+          <img id="fcPortrait" class="fc-portrait" alt="">
+          <span id="fcName">—</span>
+        </span>
       </div>
       <div class="field">
         <span class="field-label">Formup Location</span>
-        <span class="field-value highlight" id="formupLoc">—</span>
+        <span class="field-value" style="overflow:visible;">
+          <button class="formup-nav-btn" id="formupBtn" disabled title="Set autopilot destination">—</button>
+        </span>
       </div>
       <div class="field">
         <span class="field-label">Comms</span>
@@ -524,6 +599,7 @@
         Target: <span class="accent" id="targetSig">—</span>
         &nbsp;·&nbsp;
         Sig: <span class="accent" id="sigName">—</span>
+        <span id="footerMsg" style="display:none; margin-left:10px; font-family:var(--mono); font-size:9px;"></span>
       </div>
       <div style="display:flex; align-items:center; gap:10px; -webkit-app-region: no-drag;">
         <div class="countdown-ring" title="Auto-dismiss">
@@ -533,6 +609,7 @@
           </svg>
           <div class="countdown-num" id="countdownNum">30</div>
         </div>
+        <button class="join-btn"    id="joinBtn"    title="Open comms · Set waypoint · Find FC">Join</button>
         <button class="dismiss-btn" id="dismissBtn">Dismiss</button>
       </div>
     </div>
@@ -542,6 +619,93 @@
   <script>
     const DISMISS_SECS  = 30;
     const CIRCUMFERENCE = 2 * Math.PI * 11; // r=11 → 69.115
+
+    // ── System ID lookup — SDE first, ESI fetch fallback ─────────────────────
+    async function resolveSystemId(systemName) {
+      // Try local SDE via IPC first (fast, offline-capable)
+      try {
+        if (window.eveAPI?.systemIdByName) {
+          const id = await window.eveAPI.systemIdByName(systemName);
+          if (id) return id;
+        }
+      } catch(e) {}
+      // Fallback: resolve via ESI /universe/ids/ (same endpoint as portrait lookup)
+      const res = await fetch(
+        'https://esi.evetech.net/v1/universe/ids/?datasource=tranquility',
+        {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify([systemName]),
+        }
+      );
+      if (!res.ok) throw new Error(`ESI ${res.status} resolving system`);
+      const data = await res.json();
+      const sys  = (data.solar_systems || [])[0];
+      if (!sys?.id) throw new Error(`System not found: ${systemName}`);
+      return sys.id;
+    }
+
+    function showFooterError(msg) {
+      const el = document.getElementById('footerMsg');
+      if (!el) return;
+      const isOk = msg.startsWith('⊕');
+      el.textContent  = msg;
+      el.style.color  = isOk ? '#4ada8a' : 'var(--warning)';
+      el.style.display = 'block';
+      setTimeout(() => { el.style.display = 'none'; el.textContent = ''; }, 5000);
+    }
+
+    // ── FC portrait ──────────────────────────────────────────────────────────
+    async function resolveFcPortrait(fcName) {
+      if (!fcName) return;
+      const img = document.getElementById('fcPortrait');
+      if (!img) return;
+      try {
+        const res = await fetch(
+          'https://esi.evetech.net/v1/universe/ids/?datasource=tranquility',
+          {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify([fcName]),
+          }
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const char = (data.characters || [])[0];
+        if (char?.id) {
+          img.onload  = () => img.classList.add('loaded');
+          img.onerror = () => {};
+          img.src = `https://images.evetech.net/characters/${char.id}/portrait?size=64`;
+        }
+      } catch (e) { /* portraits are cosmetic — fail silently */ }
+    }
+
+    // Raw ping fields stored by populate() so the JOIN handler can read them
+    let pingData = { fc: null, formup: null, comms: null };
+
+    // Comms channels loaded from yaml/gsf_sigs.yaml
+    let commsChannels = [];
+    (async () => {
+      try {
+        if (window.eveAPI?.getCommsChannels) {
+          commsChannels = await window.eveAPI.getCommsChannels();
+        }
+      } catch(e) {}
+    })();
+
+    /** Returns a URL for the comms string: embedded URL first, then YAML lookup. */
+    function resolveCommsUrl(commsText) {
+      if (!commsText) return null;
+      const embedded = commsText.match(/https?:\/\/[^\s<>"]+/i);
+      if (embedded) return embedded[0].replace(/[.)]+$/, '');
+      const lower = commsText.toLowerCase();
+      for (const ch of commsChannels) {
+        if (ch.url && ch.match.some(m => lower.includes(m.toLowerCase()))) {
+          return ch.url;
+        }
+      }
+      return null;
+    }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
     function esc(str) {
@@ -646,6 +810,18 @@
         sig      = sig      || parsed.sig      || null;
       }
 
+      // Stash raw values so the JOIN button can use them untruncated
+      pingData = { fc, formup, comms };
+
+      // Update JOIN tooltip to show what will open
+      const joinBtn = document.getElementById('joinBtn');
+      if (joinBtn) {
+        const parts = [];
+        if (comms) parts.push(comms.replace(/https?:\/\/\S+/gi,'').trim() || comms);
+        if (formup) parts.push('→ ' + formup.split(/\s+-\s+/)[0].trim());
+        joinBtn.title = parts.length ? parts.join(' · ') : 'Open comms · Set waypoint · Find FC';
+      }
+
       // Title bar sig label
       const sigLabel = sig ? sig.toUpperCase() + ' BROADCAST' : 'DIRECTOR BROADCAST';
       document.getElementById('sigLabel').textContent  = sigLabel;
@@ -655,10 +831,17 @@
       document.getElementById('eveTime').textContent   = eveTime ? esc(eveTime) + ' EVE' : '';
 
       // FC
-      document.getElementById('fcName').textContent    = truncate(fc, 28) !== '—' ? truncate(fc, 28) : '—';
+      document.getElementById('fcName').textContent = truncate(fc, 28) !== '—' ? truncate(fc, 28) : '—';
+      if (fc) resolveFcPortrait(fc.replace(/[​-‏‪-‮⁠-⁤﻿­]/g, '').trim());
 
-      // Formup
-      document.getElementById('formupLoc').textContent = truncate(formup, 28);
+      // Formup — button enabled only when there's a system to navigate to
+      const formupBtn = document.getElementById('formupBtn');
+      if (formupBtn) {
+        const display = truncate(formup, 28);
+        formupBtn.textContent = display;
+        formupBtn.disabled    = !formup;
+        formupBtn.dataset.formup = formup || '';
+      }
 
       // Comms
       document.getElementById('commsVal').textContent  = truncate(comms, 28);
@@ -715,6 +898,141 @@
 
     document.getElementById('closeBtn').addEventListener('click',   dismiss);
     document.getElementById('dismissBtn').addEventListener('click', dismiss);
+
+    // ── Formup navigate ───────────────────────────────────────────────────────
+    document.getElementById('formupBtn').addEventListener('click', async () => {
+      const btn      = document.getElementById('formupBtn');
+      const formup   = btn.dataset.formup || '';
+      if (!formup) return;
+
+      // Extract system name — split on " - " or " (" to strip station/structure
+      const systemName = formup.replace(/[​-‏‪-‮⁠-⁤﻿­]/g, '').trim()
+                               .split(/\s+-\s+|\s+\(/)[0].trim();
+      if (!systemName) return;
+
+      btn.disabled    = true;
+      const origText  = btn.textContent;
+      btn.textContent = '…';
+      btn.className   = 'formup-nav-btn';
+
+      try {
+        const accounts = await window.eveAPI.getAccounts().catch(() => []);
+        if (!accounts.length) throw new Error('No characters — add one first');
+        const charId = accounts[0].characterId;
+
+        const systemId = await resolveSystemId(systemName);
+
+        await window.eveAPI.setAutopilotDestination(charId, systemId);
+        btn.textContent = '✓ ' + origText;
+        btn.classList.add('done');
+        setTimeout(() => {
+          btn.textContent = origText;
+          btn.className   = 'formup-nav-btn';
+          btn.disabled    = false;
+        }, 2500);
+      } catch (err) {
+        console.error('[Ping alert] Formup navigate:', err.message);
+        showFooterError('Navigate: ' + err.message);
+        btn.textContent = '⚠ ' + origText;
+        btn.classList.add('err');
+        btn.title = err.message;
+        setTimeout(() => {
+          btn.textContent = origText;
+          btn.className   = 'formup-nav-btn';
+          btn.disabled    = false;
+          btn.title       = 'Set autopilot destination';
+        }, 3000);
+      }
+    });
+
+    // ── JOIN button ───────────────────────────────────────────────────────────
+    // Three actions: open comms URL · set autopilot waypoint · open FC fleet finder
+    function extractUrl(str) {
+      if (!str) return null;
+      const m = str.match(/https?:\/\/\S+/i);
+      return m ? m[0] : null;
+    }
+
+    function extractSystemName(formup) {
+      // "C-J6MT" or "C-J6MT - Keepstar" → "C-J6MT"
+      // Splits on " - " (station separator), " (" or " >"
+      if (!formup) return null;
+      return formup.replace(/[​-‏﻿]/g, '').trim().split(/\s+-\s+|\s+\(|\s+>/)[0].trim() || null;
+    }
+
+    document.getElementById('joinBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('joinBtn');
+      btn.disabled = true;
+      btn.textContent = '…';
+      btn.className = 'join-btn';
+
+      const errors = [];
+
+      // ── 1. Open comms URL (embedded or from YAML channel map) ─────────────
+      const commsUrl = resolveCommsUrl(pingData.comms);
+      if (commsUrl) {
+        try { await window.eveAPI.openExternalUrl(commsUrl); }
+        catch (e) { errors.push('Comms: ' + e.message); }
+      }
+
+      // ── 2. Open FC's info window in active EVE client ─────────────────────
+      // ESI pops their character card inside EVE — if they have a fleet advert
+      // up, EVE shows "Find Fleet" right there so you can apply in-game.
+      if (pingData.fc) {
+        const fcName = pingData.fc.replace(/[​-‏‪-‮⁠-⁤﻿­]/g, '').trim();
+        try {
+          const accounts = await window.eveAPI.getAccounts().catch(() => []);
+          const charId   = accounts[0]?.characterId;
+          if (!charId) throw new Error('No character logged in');
+
+          // Resolve FC name → character ID (reuse portrait cache if available)
+          const esiRes = await fetch(
+            'https://esi.evetech.net/v1/universe/ids/?datasource=tranquility',
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify([fcName]) }
+          );
+          if (!esiRes.ok) throw new Error(`ESI ${esiRes.status}`);
+          const data   = await esiRes.json();
+          const fcChar = (data.characters || [])[0];
+          if (!fcChar?.id) throw new Error(`Character not found: ${fcName}`);
+
+          await window.eveAPI.openCharacterInfoWindow(charId, fcChar.id);
+          // EVE will show "Find Fleet" in the info card if an advert is up
+        } catch (e) { errors.push('Fleet: ' + e.message); }
+      }
+
+      // ── 3. Set autopilot waypoint to formup system ─────────────────────────
+      const systemName = extractSystemName(pingData.formup);
+      if (systemName) {
+        try {
+          const accounts = await window.eveAPI.getAccounts().catch(() => []);
+          const charId   = accounts[0]?.characterId;
+          if (!charId) throw new Error('No character — add a character first');
+
+          const systemId = await resolveSystemId(systemName);
+          await window.eveAPI.setAutopilotDestination(charId, systemId);
+          showFooterError('⊕ Waypoint set: ' + systemName); // green-ish confirmation
+        } catch (e) {
+          console.error('[JOIN] waypoint failed:', e.message);
+          errors.push('Waypoint: ' + e.message);
+          showFooterError('Waypoint failed: ' + e.message);
+        }
+      }
+
+      btn.disabled = false;
+      if (errors.length) {
+        btn.textContent = '⚠ Join';
+        btn.className   = 'join-btn fail';
+        btn.title       = errors.join('\n');
+      } else {
+        btn.textContent = '✓ Join';
+        btn.className   = 'join-btn ok';
+      }
+      setTimeout(() => {
+        btn.textContent = 'Join';
+        btn.className   = 'join-btn';
+        btn.title       = 'Open comms · Set waypoint · Find FC';
+      }, 4000);
+    });
 
     // ── Receive data from main process ────────────────────────────────────────
     // Register the listener FIRST so we never miss the push from main.

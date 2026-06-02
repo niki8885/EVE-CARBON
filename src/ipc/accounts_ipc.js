@@ -27,6 +27,7 @@ const SCOPES = [
   'esi-skills.read_skillqueue.v1',
   'esi-fleets.read_fleet.v1',
   'esi-ui.write_waypoint.v1',
+  'esi-ui.open_window.v1',
 ].join(' ');
 
 // ─── PKCE helpers ─────────────────────────────────────────────────────────────

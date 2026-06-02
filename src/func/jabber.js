@@ -15,6 +15,120 @@
 jabberFilterDirectorOnly  = false;
 var jabberFilterBroadcastOnly = false;
 
+// ── FC portrait cache ─────────────────────────────────────────────────────────
+// Maps lowercase FC name → characterId (number) or null (not found / failed).
+// Populated lazily after each table render.
+
+const jabberPortraitCache = new Map();
+
+/** After a table render, batch-resolve any unresolved FC names and fill in srcs.
+ *  Calls ESI /universe/ids/ directly via fetch — ESI allows CORS from any origin
+ *  so no IPC hop needed, and it avoids httpPost serialisation issues. */
+async function jabberResolvePortraits() {
+  const imgs = [...document.querySelectorAll(
+    '#jabberTable img.jabber-fc-portrait[data-fc-name]:not([data-resolved])'
+  )];
+  if (!imgs.length) return;
+
+  const unresolved = [...new Set(imgs.map(i => i.dataset.fcName))]
+    .filter(n => n && !jabberPortraitCache.has(n.toLowerCase()));
+
+  if (unresolved.length) {
+    try {
+      const res  = await fetch(
+        'https://esi.evetech.net/v1/universe/ids/?datasource=tranquility',
+        {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(unresolved),
+        }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        for (const { name, id } of (data.characters || [])) {
+          jabberPortraitCache.set(name.toLowerCase(), id);
+        }
+        console.debug('[Jabber portraits] resolved', data.characters?.length ?? 0, '/', unresolved.length);
+      } else {
+        console.warn('[Jabber portraits] ESI', res.status, await res.text().catch(() => ''));
+      }
+    } catch (e) {
+      console.warn('[Jabber portraits] fetch failed:', e.message);
+    }
+    for (const n of unresolved) {
+      if (!jabberPortraitCache.has(n.toLowerCase())) jabberPortraitCache.set(n.toLowerCase(), null);
+    }
+  }
+
+  for (const img of imgs) {
+    img.dataset.resolved = '1';
+    const id = jabberPortraitCache.get(img.dataset.fcName.toLowerCase());
+    if (id) {
+      img.style.display = '';
+      img.onerror = () => { img.style.display = 'none'; };
+      img.src = `https://images.evetech.net/characters/${id}/portrait?size=32`;
+    }
+  }
+}
+
+// ── SIG / Squad lookup map ────────────────────────────────────────────────────
+// Populated from yaml/gsf_sigs.yaml via IPC. Keys are normalised SIG names.
+
+let jabberSigsMap = new Map();
+
+function jabberNormSig(s) {
+  return s.toLowerCase().replace(/[\s_\-\.]+/g, '');
+}
+
+function jabberHexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+async function loadJabberSigsMap() {
+  try {
+    const groups = await window.eveAPI.getSigGroups();
+    jabberSigsMap.clear();
+    for (const g of groups) {
+      jabberSigsMap.set(jabberNormSig(g.name), g);
+    }
+  } catch (e) {
+    console.warn('[Jabber] loadJabberSigsMap failed:', e.message);
+  }
+}
+
+// ── Comms channels map ────────────────────────────────────────────────────────
+// Loaded from yaml/gsf_sigs.yaml comms_channels section.
+// Each entry: { name, match: string[], url: string }
+
+let jabberCommsChannels = []; // raw array, kept for ordered prefix matching
+
+async function loadJabberCommsChannels() {
+  try {
+    jabberCommsChannels = await window.eveAPI.getCommsChannels();
+  } catch (e) {
+    console.warn('[Jabber] loadJabberCommsChannels failed:', e.message);
+  }
+}
+
+/** Returns the configured URL for a comms string, or null if none found / not configured. */
+function jabberCommsUrl(commsText) {
+  if (!commsText) return null;
+  // First: URL already embedded in the text
+  const embedded = commsText.match(/https?:\/\/[^\s<>"]+/i);
+  if (embedded) return embedded[0].replace(/[.)]+$/, '');
+  // Second: match against configured channels
+  const lower = commsText.toLowerCase();
+  for (const ch of jabberCommsChannels) {
+    if (ch.url && ch.match.some(m => lower.includes(m.toLowerCase()))) {
+      return ch.url;
+    }
+  }
+  return null;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Strip zero-width / invisible Unicode chars used as EVE field separators. */
@@ -90,6 +204,71 @@ function jabberSortKey(row) {
 
 // ── PAP badge ─────────────────────────────────────────────────────────────────
 
+// ── Formup navigate button ────────────────────────────────────────────────────
+
+function jabberFormupBtn(formup) {
+  if (!formup) return '';
+  const clean = formup.replace(/[​-‏‪-‮﻿]/g, '').trim();
+  if (!clean) return '';
+  // Extract just the system name (before " - structure" or " (")
+  const systemName = clean.split(/\s+-\s+|\s+\(/)[0].trim();
+  return `<button class="jformup-btn" data-formup-system="${escHtml(systemName)}" title="Navigate to ${escHtml(systemName)}">${escHtml(clean)}</button>`;
+}
+
+// ── Linkify ───────────────────────────────────────────────────────────────────
+// Escapes all text and wraps http(s) URLs in clickable anchor tags.
+// The click is handled via event delegation on #jabberTable (see bindJabberEvents).
+
+function jabberLinkify(str) {
+  if (!str) return '';
+  const urlRe = /https?:\/\/[^\s<>"]+/gi;
+  const parts = [];
+  let last = 0, m;
+  while ((m = urlRe.exec(str)) !== null) {
+    if (m.index > last) parts.push(escHtml(str.slice(last, m.index)));
+    const url = m[0].replace(/[.)]+$/, ''); // trim trailing punctuation
+    parts.push(`<a class="jabber-link" href="#" data-url="${escHtml(url)}" title="${escHtml(url)}">${escHtml(url)}</a>`);
+    last = m.index + m[0].length;
+  }
+  if (last < str.length) parts.push(escHtml(str.slice(last)));
+  return parts.join('');
+}
+
+/** Render the FC Name cell with a circular portrait placeholder. */
+function jabberFcCell(fcName) {
+  if (!fcName) return '';
+  const clean = fcName.replace(/[​-‏﻿]/g, '').trim();
+  if (!clean) return escHtml(fcName);
+  const cachedId = jabberPortraitCache.get(clean.toLowerCase());
+  // Only set src when we have a real ID — omitting src entirely avoids an
+  // immediate onerror from src="" which would hide the element before the
+  // async resolution can fill it in.
+  const srcAttr = cachedId
+    ? `src="https://images.evetech.net/characters/${cachedId}/portrait?size=32" onerror="this.style.display='none'"`
+    : '';
+  const img = `<img class="jabber-fc-portrait" ${srcAttr}
+    data-fc-name="${escHtml(clean)}"
+    ${cachedId ? 'data-resolved="1"' : ''} alt="">`;
+  return `<span class="jabber-fc-cell">${img}<span class="jabber-fc-name">${escHtml(clean)}</span></span>`;
+}
+
+/** Render the comms cell: linkify embedded URLs; if a configured channel URL
+ *  is found and no URL is already in the text, append a clickable ⊕ link. */
+function jabberCommsCell(comms) {
+  if (!comms) return '';
+  const hasEmbedded = /https?:\/\//i.test(comms);
+  const configUrl   = !hasEmbedded ? jabberCommsUrl(comms) : null;
+
+  // Linkify handles any embedded URLs in the text
+  let html = jabberLinkify(comms);
+
+  // Append a small join-link badge when a configured URL exists but isn't in the text
+  if (configUrl) {
+    html += ` <a class="jabber-link jabber-comms-join" href="#" data-url="${escHtml(configUrl)}" title="Open ${escHtml(comms)} comms">⊕</a>`;
+  }
+  return html;
+}
+
 function jabberPapBadge(papType) {
   if (!papType) return '';
   const clean = papType.trim();
@@ -98,6 +277,49 @@ function jabberPapBadge(papType) {
             : /peacetime/.test(lower) ? 'jpap-peacetime'
             : 'jpap-sig';
   return `<span class="jpap-badge ${cls}">${escHtml(clean.toUpperCase())}</span>`;
+}
+
+function jabberBadgeFromYaml(clean, baseClass) {
+  const entry = jabberSigsMap.get(jabberNormSig(clean));
+  if (!entry) return null;
+  const bg     = jabberHexToRgba(entry.color, 0.12);
+  const border = jabberHexToRgba(entry.color, 0.32);
+  const icon   = entry.iconUrl
+    ? `<img src="${entry.iconUrl}" style="width:12px;height:12px;object-fit:contain;vertical-align:middle;margin-right:3px;border-radius:2px;" onerror="this.style.display='none'">`
+    : '';
+  return `<span class="${baseClass}" style="background:${bg};color:${entry.color};border:1px solid ${border};">${icon}${escHtml(clean)}</span>`;
+}
+
+function jabberTargetBadge(target) {
+  if (!target) return '';
+  const clean = target.trim();
+  const yamlBadge = jabberBadgeFromYaml(clean, 'jtgt-badge');
+  if (yamlBadge) return yamlBadge;
+  const lower = clean.toLowerCase();
+  const cls = /^all$/.test(lower)     ? 'jtgt-all'
+            : /incursion/.test(lower) ? 'jtgt-incursion'
+            : /goon/.test(lower)      ? 'jtgt-goon'
+            : /locust/.test(lower)    ? 'jtgt-locusts'
+            : /^fcsc$/.test(lower)    ? 'jtgt-fcsc'
+            : /opt.all/.test(lower)   ? 'jtgt-optall'
+            : /beehive/.test(lower)   ? 'jtgt-beehive'
+            : 'jtgt-other';
+  return `<span class="jtgt-badge ${cls}">${escHtml(clean)}</span>`;
+}
+
+function jabberSigBadge(sig) {
+  if (!sig) return '';
+  const clean = sig.trim();
+  const yamlBadge = jabberBadgeFromYaml(clean, 'jsig-badge');
+  if (yamlBadge) return yamlBadge;
+  const lower = clean.toLowerCase();
+  const cls = /capital.commander/.test(lower) ? 'jsig-capital'
+            : /skirmish/.test(lower)          ? 'jsig-skirmish'
+            : /guardbee/.test(lower)          ? 'jsig-guardbees'
+            : /^gice$/.test(lower)            ? 'jsig-gice'
+            : /^coord$/.test(lower)           ? 'jsig-coord'
+            : 'jsig-other';
+  return `<span class="jsig-badge ${cls}">${escHtml(clean)}</span>`;
 }
 
 // ── Column visibility ─────────────────────────────────────────────────────────
@@ -284,20 +506,23 @@ function renderJabberTable() {
 
     return `<tr title="${escHtml(row.raw_body || '')}">
       <td style="font-family:var(--mono);font-size:11px;">${escHtml(row.eve_timecode || row.ping_timestamp || '')}</td>
-      <td>${escHtml(row.fc_name       || '')}</td>
-      <td>${escHtml(row.formup_location || '')}</td>
+      <td style="overflow:visible;">${jabberFcCell(row.fc_name)}</td>
+      <td style="overflow:visible;">${jabberFormupBtn(row.formup_location)}</td>
       <td style="overflow:visible;">${jabberPapBadge(row.pap_type)}</td>
       <td title="${escHtml(row.doctrine || '')}">${escHtml(docShort)}</td>
-      <td>${escHtml(row.sig           || '')}</td>
-      <td>${escHtml(row.comms         || '')}</td>
+      <td style="overflow:visible;">${jabberSigBadge(row.sig)}</td>
+      <td style="overflow:visible;">${jabberCommsCell(row.comms)}</td>
       <td>${escHtml(row.gsol_member   || row.who_pinged || '')}</td>
-      <td>${escHtml(row.target_sig    || '')}</td>
-      <td class="jabber-msg-cell" title="${escHtml(row.hurf || '')}">${escHtml(row.hurf || row.raw_body || '')}</td>
+      <td style="overflow:visible;">${jabberTargetBadge(row.target_sig)}</td>
+      <td class="jabber-msg-cell" title="${escHtml(row.hurf || '')}">${jabberLinkify(row.hurf || row.raw_body || '')}</td>
       <td style="text-align:center;">${viewBtn}</td>
     </tr>`;
   }).join('');
 
   updateJabberSummary(sorted.length);
+
+  // Resolve FC portraits in background — updates img srcs without re-rendering
+  setTimeout(jabberResolvePortraits, 0);
 
   // Wire View buttons — delegate on tbody so it survives re-renders
   tbody.querySelectorAll('.ping-view-btn[data-ping-id]').forEach(btn => {
@@ -404,9 +629,98 @@ async function autoConnectJabber() {
 
 // ── Event binding ─────────────────────────────────────────────────────────────
 
+// ── Table zoom ────────────────────────────────────────────────────────────────
+
+const JABBER_ZOOM_SIZES = [9, 10, 11, 12, 13, 14, 15]; // px
+const JABBER_ZOOM_DEFAULT = 2; // index → 11px
+
+function jabberGetZoomIdx() {
+  const v = parseInt(localStorage.getItem('jabberZoomIdx'), 10);
+  return isNaN(v) ? JABBER_ZOOM_DEFAULT : Math.max(0, Math.min(JABBER_ZOOM_SIZES.length - 1, v));
+}
+
+function jabberApplyZoom(idx) {
+  const table = document.getElementById('jabberTable');
+  const label = document.getElementById('jabberZoomLevel');
+  const px    = JABBER_ZOOM_SIZES[idx];
+  if (table) table.style.setProperty('--jabber-zoom', px + 'px');
+  if (label) label.textContent = px;
+  localStorage.setItem('jabberZoomIdx', idx);
+}
+
+function initJabberZoom() {
+  jabberApplyZoom(jabberGetZoomIdx());
+
+  document.getElementById('jabberZoomIn')?.addEventListener('click', () => {
+    const idx = jabberGetZoomIdx();
+    if (idx < JABBER_ZOOM_SIZES.length - 1) jabberApplyZoom(idx + 1);
+  });
+  document.getElementById('jabberZoomOut')?.addEventListener('click', () => {
+    const idx = jabberGetZoomIdx();
+    if (idx > 0) jabberApplyZoom(idx - 1);
+  });
+}
+
 function bindJabberEvents() {
   initJabberColsToggle();
   initJabberColResize();
+  initJabberZoom();
+  loadJabberSigsMap();
+  loadJabberCommsChannels();
+
+  // Delegated click handler — handles links and formup nav buttons.
+  // bindJabberEvents() is called twice (pageLoader + app.js), so guard against
+  // adding duplicate listeners with a module-level flag.
+  const table = document.getElementById('jabberTable');
+  if (table && !table._jabberClickBound) {
+    table._jabberClickBound = true;
+    table.addEventListener('click', async (e) => {
+      // ── External links ──
+      const link = e.target.closest('.jabber-link');
+      if (link) {
+        e.preventDefault();
+        e.stopPropagation();
+        const url = link.dataset.url;
+        if (url) window.eveAPI.openExternalUrl(url);
+        return;
+      }
+
+      // ── Formup navigate ──
+      const btn = e.target.closest('.jformup-btn');
+      if (!btn || btn.disabled) return;
+      e.stopPropagation();
+      const systemName = btn.dataset.formupSystem;
+      if (!systemName) return;
+
+      btn.disabled    = true;
+      const origText  = btn.textContent;
+      btn.textContent = '…';
+
+      try {
+        const accounts = await window.eveAPI.getAccounts().catch(() => []);
+        if (!accounts.length) throw new Error('No characters — add one first');
+        const match  = accounts.find(a => String(a.characterId) === String(selectedCharacterId));
+        const charId = (match || accounts[0]).characterId;
+
+        const systemId = await window.eveAPI.systemIdByName(systemName);
+        if (!systemId) throw new Error(`System not found: ${systemName}`);
+
+        await window.eveAPI.setAutopilotDestination(charId, systemId);
+        btn.textContent = '✓ ' + origText;
+        btn.classList.add('done');
+        setTimeout(() => {
+          btn.textContent = origText;
+          btn.classList.remove('done');
+          btn.disabled = false;
+        }, 2500);
+      } catch (err) {
+        showToast(`Navigate failed: ${err.message}`, 'error');
+        btn.textContent = origText;
+        btn.classList.add('err');
+        setTimeout(() => { btn.classList.remove('err'); btn.disabled = false; }, 2000);
+      }
+    });
+  }
 
   // Live messages from main process.
   // When the DB insert succeeded, the broadcast is a complete DB row (has

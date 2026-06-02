@@ -1,4 +1,9 @@
 groups:
+  - name: "All"
+    display_name: "[A] All"
+    type: "ALL"
+    color: "#99B8BA"
+    icon: "icons/newbee96.png"
   - name: "Alliance Tournament"
     display_name: "[SIG] Alliance Tournament"
     type: "SIG"
@@ -122,7 +127,7 @@ groups:
   - name: "Goon Vanguard"
     display_name: "[S] Goon Vanguard"
     type: "Squad"
-    color: "#388E3C"
+    color: "#2A6BB0"
     icon: "icons/goon_vanguard.png"
   - name: "Gooncannons"
     display_name: "[SIG] Gooncannons"
@@ -192,7 +197,7 @@ groups:
   - name: "Incursions"
     display_name: "[SIG] Incursions"
     type: "SIG"
-    color: "#78909C"
+    color: "#228F3C"
     icon: "icons/incursions.png"
   - name: "Insurgent Squad"
     display_name: "[SIG] Insurgent Squad"
@@ -217,8 +222,8 @@ groups:
   - name: "Locusts"
     display_name: "[SIG] Locusts"
     type: "SIG"
-    color: "#FBC02D"
-    icon: "icons/locusts.png"
+    color: "#B06F2A"
+    icon: "icons/locust.png"
   - name: "Love. Death. Bees."
     display_name: "[S] Love. Death. Bees."
     type: "Squad"
@@ -322,7 +327,7 @@ groups:
   - name: "Scouts"
     display_name: "[SIG] Scouts"
     type: "SIG"
-    color: "#78909C"
+    color: "#7BDBE0"
     icon: "icons/scouts.png"
   - name: "Sigma"
     display_name: "[S] Sigma"
@@ -439,3 +444,97 @@ groups:
     type: "SIG"
     color: "#424242"
     icon: "icons/zungen_drops.png"
+# ─── Comms Channels ────────────────────────────────────────────────────────────
+# Map broadcast comms field values to their voice/link URLs.
+# The JOIN button in ping alerts uses these when no URL is embedded in the ping.
+# The Jabber comms column also turns matching entries into clickable links.
+#
+# HOW TO USE:
+#   Fill in 'url' with your Mumble server link, Discord invite, etc.
+#   'match' values are checked against the comms text (case-insensitive).
+#   Add your own entries at the bottom for SIG-specific channels.
+
+comms_channels:
+  - name: "Op 1"
+    match: ["op 1", "op1"]
+    url: "mumble://mumble.goonfleet.com/Ops/Op%20Channels/OP%201%20-%20Back%20to%20Back%20X47%20Champions?title=Goonfleet&version=1.2.0"
+
+  - name: "Op 2"
+    match: ["op 2", "op2"]
+    url: "mumble://mumble.goonfleet.com/Ops/Op%20Channels/OP%202%20-%20Electric%20heat%20gun%20enjoyers?title=Goonfleet&version=1.2.0"
+
+  - name: "Op 3"
+    match: ["op 3", "op3"]
+    url: "mumble://mumble.goonfleet.com/Ops/Op%20Channels/OP%203%20-%20Just%20a%20sig?title=Goonfleet&version=1.2.0"
+
+  - name: "Op 4"
+    match: ["op 4", "op4"]
+    url: "mumble://mumble.goonfleet.com/Ops/Op%20Channels/OP%204%20-%20dead%20keepstars?title=Goonfleet&version=1.2.0"
+
+  - name: "Op 5"
+    match: ["op 5", "op5"]
+    url: "mumble://mumble.goonfleet.com/Ops/Op%20Channels/OP%205%20-%20AB%20or%20MWD?title=Goonfleet&version=1.2.0"
+
+  - name: "Op 6"
+    match: ["op 6", "op6"]
+    url: "mumble://mumble.goonfleet.com/Ops/Op%20Channels/OP%206%20-%20different%20colors%20of%20crayons?title=Goonfleet&version=1.2.0"
+
+  - name: "Op 7"
+    match: ["op 7", "op7"]
+    url: "mumble://mumble.goonfleet.com/Ops/Op%20Channels/o7%20%20%20%20-%20%20m8s?title=Goonfleet&version=1.2.0"
+
+  - name: "Op 8"
+    match: ["op 8", "op8"]
+    url: "mumble://mumble.goonfleet.com/Ops/Op%20Channels/OP%208%20-%20%20Asher%20Electropunched%20the%20server?title=Goonfleet&version=1.2.0"
+
+  - name: "Op 9"
+    match: ["op 9", "op9"]
+    url: "mumble://mumble.goonfleet.com/Ops/Op%20Channels/OP%209%20-%20times%20the%20FC%20said%20gate%20is%20RED?title=Goonfleet&version=1.2.0"
+
+  - name: "Op 10"
+    match: ["op 10", "op10"]
+    url: "mumble://mumble.goonfleet.com/Ops/Op%20Channels/OP%2010%20-%20minutes%20since%20the%20fleet%20left?title=Goonfleet&version=1.2.0"
+
+  - name: "Op 11"
+    match: ["op 11", "op11"]
+    url: "mumble://mumble.goonfleet.com/Ops/Op%20Channels/OP%2011%20-%20bubbles%20on%20a%20blue%20fleet?title=Goonfleet&version=1.2.0"
+
+  - name: "Op 12"
+    match: ["op 12", "op12"]
+    url: "mumble://mumble.goonfleet.com/Ops/Op%20Channels/OP%2012%20-%20Hurf%20recovery%20room?title=Goonfleet&version=1.2.0"
+
+  - name: "Fleet A"
+    match: ["fleet a"]
+    url: ""
+
+  - name: "Fleet B"
+    match: ["fleet b"]
+    url: ""
+
+  - name: "Moveop"
+    match: ["moveop"]
+    url: ""
+
+  - name: "Alliance / GICE"
+    match: ["alliance", "gice"]
+    url: ""
+
+  - name: "Beehive"
+    match: ["behive"]
+    url: "mumble://mumble.goonfleet.com/Ops/Op%20Channels/Beehive%20-%20The%20buzzing%20is%20normal?title=Goonfleet&version=1.2.0"
+
+  - name: "Capital Ops"
+    match: ["capital", "cap ops", "capital_ops"]
+    url: "mumble://mumble.goonfleet.com/Ops/Op%20Channels/Capital%20Ops%20-%20just%20gate?title=Goonfleet&version=1.2.0"
+
+  - name: "Mumble Fleet 1"
+    match: ["fleet 1", "mumble -> sigs/squad -> fleet 1"]
+    url: ""
+
+  - name: "Mumble Fleet 2"
+    match: ["fleet 2"]
+    url: ""
+
+  - name: "Incursions"
+    match: ["incursions"]
+    url: ""

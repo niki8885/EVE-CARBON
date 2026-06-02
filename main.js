@@ -199,6 +199,12 @@ function getLocator() {
   return locator;
 }
  
+// Handlers that need no async init — register before app.whenReady() so they
+// are always available regardless of what the async chain does later.
+ipcMain.handle('open-external-url', (_, url) => {
+  if (url && /^https?:\/\//i.test(url)) shell.openExternal(url);
+});
+
 app.whenReady().then(async () => {
   initPaths();
   await initSde();
@@ -302,6 +308,89 @@ app.whenReady().then(async () => {
   // reads saved credentials on startup.
   const { registerJabberHandlers } = require('./src/jabber_ipc');
   registerJabberHandlers({ ipcHandle, jabberDataDb, createPingAlertWindow });
+
+  // Open a character's info window in the active EVE client.
+  // Requires esi-ui.open_window.v1 scope. EVE shows "Find Fleet" in the info
+  // card if that character has a fleet advert up — player clicks it in-game.
+  ipcHandle('open-character-info-window', async (_, { characterId, targetId }) => {
+    const token = await getValidToken(characterId);
+    const url   = `https://esi.evetech.net/v1/ui/openwindow/information/?target_id=${targetId}&datasource=tranquility`;
+    const res   = await fetch(url, {
+      method:  'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok && res.status !== 204) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`ESI open window ${res.status}: ${body}`);
+    }
+    return { success: true };
+  });
+
+  // Resolve character names → character IDs via ESI /universe/ids/ (public, no auth)
+  // Returns [{ name, id }] for matched characters; unmatched names are omitted.
+  ipcHandle('resolve-character-ids', async (_, names) => {
+    if (!Array.isArray(names) || !names.length) return [];
+    try {
+      const result = await httpPost(
+        'https://esi.evetech.net/latest/universe/ids/?datasource=tranquility',
+        names
+      );
+      return (result.characters || []).map(c => ({ name: c.name, id: c.id }));
+    } catch (e) {
+      console.warn('[resolve-character-ids] failed:', e.message);
+      return [];
+    }
+  });
+
+  // Resolve a solar system name → solarSystemID from the local SDE
+  ipcHandle('sde-system-id-by-name', async (_, name) => {
+    if (!sdeDb || !name) return null;
+    const row = await sdeDb.get(
+      `SELECT solarSystemID FROM mapSolarSystems WHERE LOWER(solarSystemName) = LOWER(?)`,
+      [name.trim()]
+    );
+    return row?.solarSystemID ?? null;
+  });
+
+  // Comms channels from yaml/gsf_sigs.yaml — returns the comms_channels array
+  ipcHandle('get-comms-channels', async () => {
+    try {
+      const yaml     = require('js-yaml');
+      const yamlPath = path.join(__dirname, 'yaml', 'gsf_sigs.yaml');
+      const raw      = fs.readFileSync(yamlPath, 'utf8');
+      const data     = yaml.load(raw);
+      return (data.comms_channels || []).map(c => ({
+        name:  c.name,
+        match: Array.isArray(c.match) ? c.match : [c.match],
+        url:   c.url || '',
+      }));
+    } catch (e) {
+      console.warn('[get-comms-channels] failed:', e.message);
+      return [];
+    }
+  });
+
+  // GSF SIGs / Squads — read yaml/gsf_sigs.yaml and return parsed groups with
+  // absolute file:// icon URLs so the renderer can display icons directly.
+  ipcHandle('get-sig-groups', async () => {
+    try {
+      const yaml     = require('js-yaml');
+      const { pathToFileURL } = require('url');
+      const yamlPath = path.join(__dirname, 'yaml', 'gsf_sigs.yaml');
+      const raw      = fs.readFileSync(yamlPath, 'utf8');
+      const data     = yaml.load(raw);
+      return (data.groups || []).map(g => ({
+        name:     g.name,
+        type:     g.type,
+        color:    g.color,
+        iconUrl:  pathToFileURL(path.join(__dirname, 'yaml', g.icon)).href,
+      }));
+    } catch (e) {
+      console.warn('[get-sig-groups] failed:', e.message);
+      return [];
+    }
+  });
+
   // Open the window only after ALL IPC handlers are registered.
   // Previously createWindow() was called first, causing the renderer to invoke
   // channels (app-get-config, jabber-get-messages, etc.) before their handlers

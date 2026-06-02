@@ -266,6 +266,12 @@ const PAGE_HTML = {
         <span id="jabberStatus" class="asset-summary">Connecting to Jabber...</span>
         <span style="flex:1;"></span>
         <span id="jabberSummary" class="asset-summary" style="white-space:nowrap;">0 pings</span>
+        <!-- Zoom controls -->
+        <div style="display:flex; align-items:center; gap:3px;">
+          <button id="jabberZoomOut" class="jabber-cols-btn" title="Zoom out" style="padding:2px 7px;">&#x2212;</button>
+          <span id="jabberZoomLevel" style="font-family:var(--mono);font-size:9px;color:var(--text-3);min-width:22px;text-align:center;">11</span>
+          <button id="jabberZoomIn"  class="jabber-cols-btn" title="Zoom in"  style="padding:2px 7px;">+</button>
+        </div>
         <div style="position:relative;">
           <button id="jabberColsBtn" class="jabber-cols-btn">Columns &#x25BE;</button>
           <div id="jabberColsDropdown"

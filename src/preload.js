@@ -94,6 +94,17 @@ contextBridge.exposeInMainWorld('eveAPI', {
   watchPingFile:   (path) => ipcRenderer.invoke('watch-ping-file', path),
   unwatchPingFile: ()     => ipcRenderer.invoke('unwatch-ping-file'),
 
+  // GSF SIGs / Squads metadata (yaml/gsf_sigs.yaml)
+  getSigGroups:     () => ipcRenderer.invoke('get-sig-groups'),
+  getCommsChannels: () => ipcRenderer.invoke('get-comms-channels'),
+
+  // Fleet join helpers
+  openCharacterInfoWindow: (characterId, targetId) => ipcRenderer.invoke('open-character-info-window', { characterId, targetId }),
+  resolveCharacterIds: (names)            => ipcRenderer.invoke('resolve-character-ids', names),
+  systemIdByName: (name)                  => ipcRenderer.invoke('sde-system-id-by-name', name),
+  openExternalUrl: (url)                  => ipcRenderer.invoke('open-external-url', url),
+  setWaypoint: (characterId, systemId)    => ipcRenderer.invoke('set-autopilot-destination', { characterId, systemId }),
+
   // Jabber
   connectJabber:       (config) => ipcRenderer.invoke('jabber-connect', config),
   disconnectJabber:    ()       => ipcRenderer.invoke('jabber-disconnect'),
