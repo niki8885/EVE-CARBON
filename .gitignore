@@ -7,3 +7,4 @@ data/
 data/sde.sql
 data/character_infomation.db
 tmp_electron_extracted/
+.DStore
