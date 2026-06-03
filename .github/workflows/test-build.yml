@@ -25,7 +25,7 @@ jobs:
         run: npm install --ignore-scripts
 
       - name: Test build
-        run: npm run build-win
+        run: npm run build-win -- --publish never
 
       - name: Confirm exe exists
         run: |
