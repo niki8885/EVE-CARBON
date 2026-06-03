@@ -1,0 +1,35 @@
+name: Test Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test-build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Test build
+        run: npm run build-win
+
+      - name: Confirm exe exists
+        run: |
+          if (!(Test-Path "dist/*.exe")) {
+            Write-Error "Build failed - no exe found in dist/"
+            exit 1
+          }
