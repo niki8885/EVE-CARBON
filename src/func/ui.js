@@ -9,8 +9,8 @@ function setSettingsTab(tab) {
     const target = `settingsTab${tab.charAt(0).toUpperCase() + tab.slice(1)}`;
     panel.style.display = panel.id === target ? 'block' : 'none';
   });
-  // Populate the database tab with the last-synced timestamp each time it opens
   if (tab === 'database') populateDatabaseSettings();
+  if (tab === 'palette')  populatePaletteSettings();
 }
 
 function bindUISettings() {
@@ -47,6 +47,7 @@ function bindUISettings() {
 async function populateSettingsInputs() {
   await populateJabberSettings();
   if (currentSettingsTab === 'database') await populateDatabaseSettings();
+  if (currentSettingsTab === 'palette')  await populatePaletteSettings();
 }
 
 async function saveAllSettings() {

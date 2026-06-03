@@ -17,6 +17,21 @@
   <link rel="stylesheet" href="./styles/jabber.css"/>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+
+  <!-- Apply cached theme vars BEFORE first paint so Carbon never flashes through -->
+  <script>
+  (function () {
+    try {
+      var cached = localStorage.getItem('eve-carbon-theme-vars');
+      if (cached) {
+        var s = document.createElement('style');
+        s.id = 'eve-theme-vars';
+        s.textContent = cached;
+        document.head.appendChild(s);
+      }
+    } catch (e) {}
+  })();
+  </script>
 </head>
 <body>
 
@@ -214,6 +229,7 @@
         <button class="settings-menu-btn"          data-settings-tab="forums">Forums</button>
         <button class="settings-menu-btn"          data-settings-tab="fleetCommander">Fleet Commander</button>
         <button class="settings-menu-btn"          data-settings-tab="database">Database</button>
+        <button class="settings-menu-btn"          data-settings-tab="palette">Colour Palette</button>
       </div>
       <!-- Jabber tab -->
       <div id="settingsTabJabber" class="settings-tab">
@@ -292,6 +308,50 @@
         </div>
       </div>
       <!-- Database tab -->
+      <!-- Colour Palette tab -->
+      <div id="settingsTabPalette" class="settings-tab" style="display:none;">
+        <div style="padding:20px; display:flex; flex-direction:column; gap:20px;">
+
+          <!-- Theme picker -->
+          <div>
+            <div style="font-size:10px; letter-spacing:.1em; color:var(--text-4); font-family:var(--mono); text-transform:uppercase; margin-bottom:8px;">Active Theme</div>
+            <select id="themeSelect" class="field-input" style="width:100%; cursor:pointer; font-size:13px; padding:9px 12px; margin-bottom:8px;"></select>
+            <div id="themeDescription" style="font-size:11px; color:var(--text-3); line-height:1.6; min-height:14px; margin-bottom:12px;"></div>
+            <div style="display:flex; justify-content:flex-end;">
+              <button id="themeApplyBtn" class="calc-btn" style="font-size:11px; padding:7px 22px; font-family:var(--mono); letter-spacing:.08em;">APPLY THEME</button>
+            </div>
+          </div>
+
+          <!-- Divider -->
+          <div style="border-top:1px solid var(--border-e);"></div>
+
+          <!-- Palette swatches -->
+          <div>
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+              <div style="font-size:10px; letter-spacing:.1em; color:var(--text-4); font-family:var(--mono); text-transform:uppercase;">Colour Palette</div>
+              <div style="display:flex; gap:6px;">
+                <button id="paletteEditBtn"   class="calc-btn" style="font-size:10px; padding:4px 12px; font-family:var(--mono); letter-spacing:.05em;">CUSTOMISE</button>
+                <button id="paletteCancelBtn" class="calc-btn" style="display:none; font-size:10px; padding:4px 12px; font-family:var(--mono); letter-spacing:.05em; border-color:var(--text-3); color:var(--text-3);">CANCEL</button>
+              </div>
+            </div>
+            <!-- Grid populated by palette.js -->
+            <div id="paletteSwatchGrid"></div>
+          </div>
+
+          <!-- Save row (shown in edit mode only) -->
+          <div id="paletteSaveRow" style="display:none; flex-direction:column; gap:10px; border-top:1px solid var(--border-e); padding-top:16px;">
+            <div id="paletteNameRow" style="display:flex; gap:8px; align-items:center;">
+              <input id="paletteNameInput" class="field-input" placeholder="Palette name…" style="flex:1; font-size:13px; padding:8px 10px;" />
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button id="paletteSaveBtn"   class="calc-btn" style="font-size:11px; padding:6px 16px; font-family:var(--mono); letter-spacing:.05em;">SAVE PALETTE</button>
+              <button id="paletteDeleteBtn" class="calc-btn" style="display:none; font-size:11px; padding:6px 16px; font-family:var(--mono); letter-spacing:.05em; border-color:var(--danger) !important; color:var(--danger) !important;">DELETE</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
       <div id="settingsTabDatabase" class="settings-tab" style="display:none;">
         <div class="panel" style="padding:16px; margin:0; background:var(--bg-panel); border:none; box-shadow:none;">
           <div class="settings-panel-block">
@@ -441,7 +501,7 @@
     <!-- Header -->
     <div style="display:flex; align-items:center; justify-content:space-between;
                 padding:16px 20px; border-bottom:1px solid var(--border);
-                background:rgba(8,8,8,0.95); flex-shrink:0;">
+                background:var(--bg-card-deep); flex-shrink:0;">
       <div style="display:flex; align-items:center; gap:12px;">
         <img id="journalCharPortrait" src="" alt=""
              style="width:40px;height:40px;border-radius:50%;border:1px solid var(--border);object-fit:cover;"/>
@@ -595,6 +655,7 @@
 <script src="./func/categories.js"></script>
 <script src="./state.js"></script>
 <script src="./utils.js"></script>
+<script src="./func/palette.js"></script>
 <script src="./func/ui.js"></script>
 <script src="./func/characters.js"></script>
 <script src="./func/assets.js"></script>
@@ -756,10 +817,10 @@
       <p style="color:var(--text-2); font-size:14px; line-height:1.7; margin:0 0 24px;">
         EVE Carbon is free and open-source. If you find it useful, consider sending a donation in-game — any amount is greatly appreciated and helps keep the project alive!
       </p>
-      <div style="background:var(--bg-2,#1e1e1e); border:1px solid var(--border); border-radius:8px; padding:24px 28px; display:flex; align-items:center; justify-content:space-between; gap:24px;">
+      <div style="background:var(--bg-card-deep); border:1px solid var(--border); border-radius:8px; padding:24px 28px; display:flex; align-items:center; justify-content:space-between; gap:24px;">
         <div>
           <div style="font-size:12px; color:var(--text-3); text-transform:uppercase; letter-spacing:.08em; margin-bottom:8px;">Send ISK / PLEX to</div>
-          <div id="donateCharName" style="font-size:22px; font-weight:600; color:var(--text-1, #e0e0e0); font-family:monospace; letter-spacing:.02em;">Ms Moirai</div>
+          <div id="donateCharName" style="font-size:22px; font-weight:600; color:var(--text-1); font-family:monospace; letter-spacing:.02em;">Ms Moirai</div>
         </div>
         <button id="donateCopyBtn" onclick="copyDonateChar()" style="flex-shrink:0; font-size:13px; padding:10px 22px; background:transparent; border:2px solid var(--danger,#c94040); color:var(--danger,#c94040); border-radius:4px; cursor:pointer; font-weight:600; letter-spacing:.04em; transition:opacity .15s;">Copy Name</button>
       </div>

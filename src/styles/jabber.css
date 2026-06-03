@@ -8,18 +8,16 @@
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  background: var(--accent-dim);
-  border: 1px solid var(--accent-25);
+  background: var(--accent);
+  border: 1px solid var(--accent);
   border-radius: var(--radius, 2px);
-  color: var(--accent);
+  color: #fff;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
   white-space: nowrap;
 }
 .ping-view-btn:hover {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
+  opacity: 0.82;
 }
 .ping-view-btn--live,
 .ping-view-btn:disabled {

@@ -26,6 +26,7 @@ const { registerPingFileHandlers }  = require('./src/ipc/ping_ipc');
 const { registerPIHandlers, syncPIForCharacter } = require('./src/ipc/pi_ipc');
 const { registerMapHandlers }       = require('./src/ipc/map_ipc');
 const { registerUpdaterHandlers }   = require('./src/ipc/updater_ipc');
+const { registerThemeHandlers }     = require('./src/ipc/theme_ipc');
 
 // Global reference to the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -131,7 +132,7 @@ async function initSde() {
 }
  
 // ─── Paths ────────────────────────────────────────────────────────────────────
-let userDataPath, dbPath, configPath, cacheDir, appDataDir, userPacksDir;
+let userDataPath, dbPath, configPath, cacheDir, appDataDir, userPacksDir, userThemesDir;
 // Shared state for ping file watcher — passed into registerPingFileHandlers
 // so the app-quit handler can still close it without knowing the internals.
 const pingWatcherState = { watcher: null, timer: null };
@@ -145,10 +146,12 @@ function initPaths() {
   appDataDir   = app.isPackaged
     ? path.join(process.resourcesPath || __dirname, 'data')
     : path.join(__dirname, 'data');
-  userPacksDir = path.join(userDataPath, 'packs');
-  try { fs.mkdirSync(cacheDir,    { recursive: true }); } catch (e) { /* ignore */ }
-  try { fs.mkdirSync(appDataDir,  { recursive: true }); } catch (e) { /* ignore */ }
-  try { fs.mkdirSync(userPacksDir,{ recursive: true }); } catch (e) { /* ignore */ }
+  userPacksDir  = path.join(userDataPath, 'packs');
+  userThemesDir = path.join(userDataPath, 'themes');
+  try { fs.mkdirSync(cacheDir,     { recursive: true }); } catch (e) { /* ignore */ }
+  try { fs.mkdirSync(appDataDir,   { recursive: true }); } catch (e) { /* ignore */ }
+  try { fs.mkdirSync(userPacksDir, { recursive: true }); } catch (e) { /* ignore */ }
+  try { fs.mkdirSync(userThemesDir,{ recursive: true }); } catch (e) { /* ignore */ }
 }
  
 function getCachePath(key) {
@@ -327,6 +330,7 @@ app.whenReady().then(async () => {
     getSdeDb: () => sdeDb,
   });
   registerUpdaterHandlers({ ipcHandle, app, loadConfig, saveConfig });
+  registerThemeHandlers({ ipcHandle, app, loadConfig, saveConfig, userThemesDir });
   // Jabber must register AFTER initPaths() so configPath is set, and AFTER
   // registerConfigHandlers() so app-get-config is available when jabber_ipc
   // reads saved credentials on startup.

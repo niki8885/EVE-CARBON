@@ -259,7 +259,7 @@ function selectCharacter(account) {
     const isThis = String(card.dataset.characterId) === String(account.characterId);
     card.classList.toggle('selected', isThis);
     const portrait = card.querySelector('.character-card-portrait');
-    if (portrait) portrait.style.borderColor = isThis ? '#00b3a6' : '';
+    if (portrait) portrait.style.borderColor = isThis ? getComputedStyle(document.documentElement).getPropertyValue('--teal').trim() : '';
     const content = card.querySelector('.character-card-content');
     if (!content) return;
     const existing = content.querySelector('.character-active-badge');

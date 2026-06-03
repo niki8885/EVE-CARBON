@@ -18,6 +18,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   buildCategoryBrowse();
   bindEvents();
   bindUISettings();
+  bindPaletteEvents();
+  initTheme();
   bindNavigation();
   bindIndustrySubNav();
 

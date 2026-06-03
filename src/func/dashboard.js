@@ -1273,7 +1273,7 @@ async function renderDashboardPIWidget(container, accounts) {
 
     <!-- Status counts -->
     <div style="display:flex;gap:10px;margin-bottom:12px;">
-      <div style="flex:1;padding:8px 12px;background:var(--bg-panel);border:1px solid var(--border);
+      <div style="flex:1;padding:8px 12px;background-color:var(--bg-panel);background-image:radial-gradient(circle,var(--dot-color) 1px,transparent 1px);background-size:6px 6px;border:1px solid var(--border);
                   border-radius:6px;text-align:center;">
         <div style="font-family:var(--mono);font-size:20px;font-weight:700;color:#4ecbb0;">
           ${nActive}
@@ -1281,7 +1281,7 @@ async function renderDashboardPIWidget(container, accounts) {
         <div style="font-family:var(--mono);font-size:9px;color:var(--text-3);
                     letter-spacing:0.08em;margin-top:2px;">EXTRACTING</div>
       </div>
-      <div style="flex:1;padding:8px 12px;background:var(--bg-panel);border:1px solid var(--border);
+      <div style="flex:1;padding:8px 12px;background-color:var(--bg-panel);background-image:radial-gradient(circle,var(--dot-color) 1px,transparent 1px);background-size:6px 6px;border:1px solid var(--border);
                   border-radius:6px;text-align:center;">
         <div style="font-family:var(--mono);font-size:20px;font-weight:700;
                     color:${nWarning > 0 ? '#e3a84d' : 'var(--text-3)'};">
@@ -1290,7 +1290,7 @@ async function renderDashboardPIWidget(container, accounts) {
         <div style="font-family:var(--mono);font-size:9px;color:var(--text-3);
                     letter-spacing:0.08em;margin-top:2px;">STORAGE FULL</div>
       </div>
-      <div style="flex:1;padding:8px 12px;background:var(--bg-panel);border:1px solid var(--border);
+      <div style="flex:1;padding:8px 12px;background-color:var(--bg-panel);background-image:radial-gradient(circle,var(--dot-color) 1px,transparent 1px);background-size:6px 6px;border:1px solid var(--border);
                   border-radius:6px;text-align:center;">
         <div style="font-family:var(--mono);font-size:20px;font-weight:700;
                     color:${nIdle > 0 ? 'var(--text-2)' : 'var(--text-3)'};">

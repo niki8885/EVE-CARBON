@@ -121,6 +121,14 @@ contextBridge.exposeInMainWorld('eveAPI', {
   // App metadata
   getAppVersion:       ()       => ipcRenderer.invoke('get-app-version'),
 
+  // Theme / palette
+  themeGetAll:         ()       => ipcRenderer.invoke('theme-get-all'),
+  themeGet:            (id)     => ipcRenderer.invoke('theme-get', id),
+  themeGetActive:      ()       => ipcRenderer.invoke('theme-get-active'),
+  themeSetActive:      (id)     => ipcRenderer.invoke('theme-set-active', id),
+  themeSaveCustom:     (data)   => ipcRenderer.invoke('theme-save-custom', data),
+  themeDeleteCustom:   (id)     => ipcRenderer.invoke('theme-delete-custom', id),
+
   // Updater
   updaterCheck:        ()       => ipcRenderer.invoke('updater-check'),
   updaterOpenDownload: (url)    => ipcRenderer.invoke('updater-open-download', url),

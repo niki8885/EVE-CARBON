@@ -77,6 +77,9 @@
 
   /* ── HATCH PATTERN ───────────────────────────────────────────────────────── */
   --hatch-color:       rgba(255, 255, 255, 0.018); /* body hatch overlay stripe colour */
+
+  /* ── DOT PATTERN — panel surface texture ────────────────────────────────── */
+  --dot-color:         rgba(255, 255, 255, 0.04);  /* dot fill: near-invisible on dark */
   --hatch-size:        4px;                        /* body hatch stripe pitch     */
   --hatch-card-color:  rgba(255, 255, 255, 0.010); /* hatch overlay on KPI/character cards */
 
@@ -86,13 +89,24 @@
 
   /* ── ACCENT ALPHA VARIANTS ───────────────────────────────────────────────── */
   /* Used for hover borders, focus rings, card borders, glow shadows */
-  --accent-05:      rgba(192, 57, 43, 0.05);  /* modal box-shadow ring           */
-  --accent-06:      rgba(192, 57, 43, 0.06);  /* selected-bp-card box-shadow     */
-  --accent-08:      rgba(192, 57, 43, 0.08);  /* focus ring box-shadow           */
-  --accent-03:      rgba(192, 57, 43, 0.03);  /* blueprint-card hover background */
-  --accent-25:      rgba(192, 57, 43, 0.25);  /* modal border-top, selected-bp border */
-  --accent-30:      rgba(192, 57, 43, 0.30);  /* blueprint-card hover border     */
-  --accent-40:      rgba(192, 57, 43, 0.40);  /* focus border, scrollbar hover   */
+  --accent-03:      rgba(192, 57, 43, 0.03);
+  --accent-05:      rgba(192, 57, 43, 0.05);
+  --accent-06:      rgba(192, 57, 43, 0.06);
+  --accent-08:      rgba(192, 57, 43, 0.08);
+  --accent-10:      rgba(192, 57, 43, 0.10);
+  --accent-12:      rgba(192, 57, 43, 0.12);
+  --accent-15:      rgba(192, 57, 43, 0.15);
+  --accent-20:      rgba(192, 57, 43, 0.20);
+  --accent-25:      rgba(192, 57, 43, 0.25);
+  --accent-30:      rgba(192, 57, 43, 0.30);
+  --accent-40:      rgba(192, 57, 43, 0.40);
+  --accent-50:      rgba(192, 57, 43, 0.50);
+
+  /* ── TEAL / DANGER alpha helpers (used by character sync states) ── */
+  --teal-success-bg:     rgba(78, 201, 176, 0.18);
+  --teal-success-border: rgba(78, 201, 176, 0.30);
+  --danger-bg:           rgba(244, 71, 71, 0.14);
+  --danger-border:       rgba(244, 71, 71, 0.25);
 
   /* ── MISC ────────────────────────────────────────────────────────────────── */
   --text-input:     #c2c2c2;                     /* field input / select text colour */
