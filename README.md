@@ -27,7 +27,7 @@ Designed for serious capsuleers and industrial manufacturers, EVE-Carbon is a co
 ## Building the .exe
 
 ### Requirements
-- [Node.js](https://nodejs.org/) v18 or higher (includes npm)
+- [Node.js](https://nodejs.org/) v22 or higher (includes npm)
 
 ### Steps
 
