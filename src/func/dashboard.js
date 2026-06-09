@@ -60,7 +60,12 @@ async function autoRefreshStaleCharacters(accounts) {
 
       try {
         logToConsole(`Auto-refresh: syncing ${acc.characterName}…`, 'info');
-        await window.eveAPI.syncCharacterFull(acc.characterId);
+        // Core data (wallet/location/ship/etc.) refreshes on every pass.
+        // Assets are heavy (paginated fetch + structure-location resolution) and
+        // the ESI assets endpoint only updates hourly, so they're governed by a
+        // separate 6-hour staleness gate that self-skips when data is still fresh.
+        await window.eveAPI.syncCharacterCore(acc.characterId);
+        await window.eveAPI.syncCharacterAssetsIfStale(acc.characterId);
         logToConsole(`Auto-refresh: ✓ ${acc.characterName} complete.`, 'success');
         _fireAutoSync(id, 'done', true);
       } catch (e) {

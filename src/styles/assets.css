@@ -266,9 +266,10 @@ tbody tr:first-child.asset-group-header .asset-group-header-cell {
 /* Type icon cell */
 .asset-item-icon-cell {
   width: 42px;
-  padding: 3px 6px 3px 16px !important;
+  padding: 3px 6px 3px 30px !important;
   text-align: center;
   vertical-align: middle;
+  border-left: 2px solid rgba(255,255,255,0.05) !important;
 }
 
 .asset-type-icon {
@@ -288,7 +289,7 @@ tbody tr:first-child.asset-group-header .asset-group-header-cell {
 
 /* Item name cell */
 .asset-item-name-cell {
-  padding: 5px 10px !important;
+  padding: 5px 10px 5px 24px !important;
   font-size: 12px;
   color: var(--text-1);
   vertical-align: middle;

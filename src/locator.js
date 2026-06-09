@@ -184,7 +184,8 @@ function fetchJsonInsecure(url, timeoutMs = 12000) {
 
 // ─── Factory ──────────────────────────────────────────────────────────────────
 module.exports = function createLocator({ httpGet, readCache, writeCache, getValidToken,
-                                          getStationById, upsertNpcStations, upsertUpwellStructures }) {
+                                          getStationById, upsertNpcStations, upsertUpwellStructures,
+                                          resolveNamesFromSde, getCachedNames, putCachedNames }) {
 
   // ── In-memory name cache (survives the session, avoids redundant ESI calls) ─
   const _nameCache = {};
@@ -238,7 +239,28 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
   // Resolves any mix of character/corp/alliance/system/station IDs → { id: name }.
   async function esiNamesPost(ids) {
     const unique   = [...new Set(ids.map(Number).filter(Boolean))];
-    const uncached = unique.filter(id => !_nameCache[id]);
+    let   uncached = unique.filter(id => !_nameCache[id]);
+
+    // SDE-first: serve immutable names (regions, systems, types) from disk so
+    // only dynamic IDs (corps/alliances/characters) reach ESI. Falls back
+    // cleanly when the injected resolver is absent (e.g. SDE not loaded).
+    if (uncached.length && typeof resolveNamesFromSde === 'function') {
+      try {
+        const sde = await resolveNamesFromSde(uncached);
+        for (const id of Object.keys(sde)) if (sde[id]) _nameCache[id] = sde[id];
+        uncached = uncached.filter(id => !_nameCache[id]);
+      } catch (_) { /* fall through to ESI for all */ }
+    }
+
+    // Persistent cache next: dynamic names resolved in a prior session (shared
+    // with main.js's resolveNames) avoid a repeat ESI round-trip.
+    if (uncached.length && typeof getCachedNames === 'function') {
+      try {
+        const db = await getCachedNames(uncached);
+        for (const id of Object.keys(db)) if (db[id]) _nameCache[id] = db[id];
+        uncached = uncached.filter(id => !_nameCache[id]);
+      } catch (_) { /* fall through to ESI */ }
+    }
 
     if (uncached.length) {
       const chunks = [];
@@ -274,7 +296,15 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
             req.end();
           });
           if (Array.isArray(result)) {
-            result.forEach(r => { _nameCache[r.id] = r.name; });
+            const fresh = [];
+            result.forEach(r => {
+              _nameCache[r.id] = r.name;
+              fresh.push({ id: r.id, name: r.name, category: r.category || null });
+            });
+            // Persist dynamic names so the next session / main.js reuse them.
+            if (fresh.length && typeof putCachedNames === 'function') {
+              putCachedNames(fresh).catch(() => {});
+            }
           }
         } catch (e) {
           console.log(`[locator] esiNamesPost chunk failed: ${e.message}`);
@@ -335,7 +365,7 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
   // KEY CHANGE: every path (including zkillboard / adam4eve name-only fallbacks)
   // now ends with a _esiStructureGeo() call to fill in solar_system_id and
   // owner_id so that resolveLocation() can walk the full hierarchy.
-  async function resolveStructureName(structureId, characterId = null) {
+  async function resolveStructureName(structureId, characterId = null, skipScrapes = false) {
     const id       = Number(structureId);
     const cacheKey = `struct_name_${id}`;
     const cached   = readCache(cacheKey);
@@ -440,7 +470,9 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
 
     // ── Step 4: Zkillboard structure page ────────────────────────────────────
     // Zkillboard indexes most structures that have ever appeared in killmails.
-    try {
+    // Skipped for structures already known to be unresolvable — these HTML
+    // scrapes carry 12 s timeouts and have failed repeatedly already.
+    if (!skipScrapes) try {
       const html = await fetchHtml(`${ZKILLBOARD_BASE}/location/id/${id}/`);
 
       // ─── Suppress Cloudflare/Not Found Console Spam ───
@@ -500,7 +532,7 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
 
     // ── Step 5: adam4eve structure_history page ───────────────────────────────
     // Title format: "A4E - Structure history 'NAME'" or "A4E - Structure history for 'NAME'"
-    try {
+    if (!skipScrapes) try {
       const html  = await fetchHtml(`${ADAM4EVE_BASE}/structure_history.php?id=${id}`);
       // Match: history 'NAME'  or  history "NAME"  or  history for 'NAME'
       const match = html.match(/<title[^>]*>[^<]*[Hh]istory(?:\s+for)?\s+['"]([^'"]{3,120})['"]/);
@@ -553,6 +585,12 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
       return cached;
     }
 
+    // Negative-result backoff: count consecutive resolution failures so we can
+    // stop re-running the slow external chain for structures that never resolve.
+    const failKey     = `loc_fail_${id}`;
+    const failCount   = Number(readCache(failKey) || 0);
+    const skipScrapes = failCount >= 3;
+
     const result = {
       name:               null,
       solar_system_id:    null,
@@ -569,7 +607,7 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
     try {
       if (id >= PLAYER_STRUCTURE_MIN_ID) {
         // ── Player-owned structure ──────────────────────────────────────────
-        const info             = await resolveStructureName(id, characterId);
+        const info             = await resolveStructureName(id, characterId, skipScrapes);
         result.name            = info.name;
         result.solar_system_id = info.solar_system_id;
         result.owner_id        = info.owner_id || null;
@@ -664,9 +702,19 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
       result.name = `Location ${id}`;
     }
 
-    // Cache for 24 h; short-lived if name resolution failed
-    const ttlDays = result.name.startsWith('Location ') || result.name.startsWith('Structure ') ? 0.1 : 1;
-    writeCache(cacheKey, result, ttlDays);
+    // Cache the outcome, tracking a failure streak so persistently-unresolvable
+    // structures back off instead of re-running the full chain every few hours.
+    const failed = result.name.startsWith('Location ') || result.name.startsWith('Structure ');
+    if (failed) {
+      const nextCount = failCount + 1;
+      writeCache(failKey, nextCount, 30); // remember the streak for 30 days
+      // First couple of misses may be transient (ESI 420, structure just went
+      // public) — retry soon. After that, treat it as dead and back off hard.
+      writeCache(cacheKey, result, nextCount >= 3 ? 7 : 0.1);
+    } else {
+      if (failCount) writeCache(failKey, 0, 30); // resolved — clear the streak
+      writeCache(cacheKey, result, 1);
+    }
     return result;
   }
 
@@ -911,6 +959,13 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
     return { npc: npcCount, upwell: upwellCount };
   }
 
+  // True once a location has failed the full resolution chain enough times that
+  // we've stopped retrying its slow external sources. Lets callers avoid queuing
+  // doomed immediate re-resolves for structures that will only return a fallback.
+  function isKnownUnresolvable(id) {
+    return Number(readCache(`loc_fail_${Number(id)}`) || 0) >= 3;
+  }
+
   return {
     resolveStructureName,
     resolveLocation,
@@ -919,5 +974,6 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
     resolveSystemNames,
     esiNamesPost,
     syncStationDatabase,
+    isKnownUnresolvable,
   };
 };

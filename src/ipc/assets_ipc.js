@@ -2,8 +2,10 @@
 
 const ESI_BASE = 'https://esi.evetech.net';
 
-// Assets are considered stale after 12 hours
-const ASSET_STALE_MS = 12 * 60 * 60 * 1000;
+// Assets are considered stale after 6 hours. The ESI assets endpoint itself
+// caches for 1 hour, so anything under that is guaranteed-identical data; 6h is
+// a deliberate middle ground between freshness and ESI/locator load.
+const ASSET_STALE_MS = 6 * 60 * 60 * 1000;
 
 /**
  * registerAssetHandlers
@@ -112,6 +114,10 @@ function registerAssetHandlers({
     if (unresolved.length) {
       console.log(`[AssetSync] Re-resolving ${unresolved.length} unresolved location(s) for character ${characterId}...`);
       for (const locationId of unresolved) {
+        // Skip structures already proven unresolvable — an immediate retry just
+        // re-runs the same chain that failed seconds ago and still yields a
+        // fallback, so the displayed result is unchanged either way.
+        if (getLocator().isKnownUnresolvable(locationId)) continue;
         try {
           const geo = await getLocator().resolveLocation(locationId, characterId);
           if (geo && (geo.name || geo.solar_system_id)) {
@@ -150,7 +156,7 @@ function registerAssetHandlers({
     });
   });
 
-  // ─── IPC: Asset-only sync — skips if synced within the last 12 hours ─────
+  // ─── IPC: Asset-only sync — skips if synced within ASSET_STALE_MS (6 h) ──
   ipcHandle('sync-character-assets-if-stale', async (event, characterId) => {
     const db = loadDB();
     const account = db.accounts[characterId];

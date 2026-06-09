@@ -59,19 +59,19 @@ function registerUpdaterHandlers({ ipcHandle, app, loadConfig, saveConfig }) {
   //   { hasUpdate: false }
   //   { hasUpdate: true, latestVersion, currentVersion, downloadUrl }
   ipcHandle('updater-check', async () => {
+    const currentVersion = app.getVersion();
     try {
-      const currentVersion = app.getVersion();
       const data = await fetchJson(GH_LATEST_URL);
 
       // GitHub returns tag_name like "v0.5.4" — strip the leading "v"
       const tag = data?.tag_name;
-      if (!tag || !/^v?\d+\.\d+\.\d+/.test(tag)) return { hasUpdate: false };
+      if (!tag || !/^v?\d+\.\d+\.\d+/.test(tag)) return { hasUpdate: false, currentVersion };
       const latestVersion = tag.replace(/^v/, '');
 
       // Check if this version was previously skipped
       const cfg = loadConfig();
       const skipped = cfg?.app?.updater?.skippedVersion;
-      if (skipped === latestVersion) return { hasUpdate: false };
+      if (skipped === latestVersion) return { hasUpdate: false, currentVersion };
 
       if (compareVersions(latestVersion, currentVersion) > 0) {
         // Prefer a direct .exe asset download, fall back to the release page
@@ -80,10 +80,10 @@ function registerUpdaterHandlers({ ipcHandle, app, loadConfig, saveConfig }) {
         return { hasUpdate: true, latestVersion, currentVersion, downloadUrl };
       }
 
-      return { hasUpdate: false };
+      return { hasUpdate: false, currentVersion };
     } catch (e) {
       console.warn('[updater] check failed:', e.message);
-      return { hasUpdate: false };
+      return { hasUpdate: false, currentVersion };
     }
   });
 

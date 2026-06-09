@@ -201,6 +201,13 @@ function getLocator() {
     getStationById:         (...a) => charInfoDb.getStationById(...a),
     upsertNpcStations:      (...a) => charInfoDb.upsertNpcStations(...a),
     upsertUpwellStructures: (...a) => charInfoDb.upsertUpwellStructures(...a),
+    // SDE-first name resolution: region/system/type names come from disk so the
+    // locator's bulk-name step skips ESI for everything except corps/alliances.
+    resolveNamesFromSde:    (...a) => resolveNamesFromSde(...a),
+    // Shared persistent cache for dynamic names (corps/alliances) so the locator
+    // and main.js reuse each other's resolutions across restarts.
+    getCachedNames:         (...a) => charInfoDb.getCachedNames(...a),
+    putCachedNames:         (...a) => charInfoDb.putCachedNames(...a),
   });
   return locator;
 }
@@ -1120,6 +1127,9 @@ async function fullCharacterSync(characterId, characterName, progressCb) {
       for (let i = 0; i < unresolved.length; i += CONCURRENCY) {
         const batch = unresolved.slice(i, i + CONCURRENCY);
         await Promise.allSettled(batch.map(async (locationId) => {
+          // Skip structures already proven unresolvable — an immediate retry
+          // yields the same fallback, so the displayed result is unchanged.
+          if (getLocator().isKnownUnresolvable(locationId)) return;
           try {
             const raceResult = await Promise.race([
               getLocator().resolveLocation(locationId, characterId),
@@ -1276,8 +1286,8 @@ ipcHandle('sync-character-full', async (event, characterId) => {
 });
  
 // ─── Core-only sync (everything except assets) ────────────────────────────────
-// Called by the 20-minute auto-refresh. Assets are deliberately excluded so
-// they can be governed by their own 12-hour staleness rule via
+// Called by the auto-refresh cadence. Assets are deliberately excluded so
+// they can be governed by their own 6-hour staleness rule via
 // 'sync-character-assets-if-stale'.
 async function coreCharacterSync(characterId, characterName, progressCb) {
   const report = (step, detail) => { if (progressCb) progressCb(step, detail); };
@@ -1489,15 +1499,72 @@ async function coreCharacterSync(characterId, characterName, progressCb) {
   return summary;
 }
 
+// ─── SDE-first name resolution ────────────────────────────────────────────────
+// Type IDs, solar systems, constellations and regions are immutable and already
+// ship in the local SDE. Serving them from disk avoids an ESI round-trip for the
+// bulk of name lookups. Returns a partial { id: name } map — only IDs found
+// locally are included; everything else is left for the caller to fetch via ESI.
+// Each ID space lives in its own table with non-overlapping ranges, so probing
+// all four and merging is safe.
+async function resolveNamesFromSde(ids) {
+  if (!sdeDb) return {};
+  const numIds = [...new Set(ids.map(Number).filter(Boolean))];
+  if (!numIds.length) return {};
+
+  const out = {};
+  // Probe every static ID space. A query against a table this SDE build doesn't
+  // have (e.g. invTypes vs invTypes_en) just throws and is skipped, so listing
+  // both type-name variants is safe and captures whichever exists.
+  const queries = [
+    `SELECT typeID          AS id, typeName          AS name FROM invTypes          WHERE typeID          IN (__PH__)`,
+    `SELECT typeID          AS id, typeName          AS name FROM invTypes_en       WHERE typeID          IN (__PH__)`,
+    `SELECT solarSystemID   AS id, solarSystemName   AS name FROM mapSolarSystems   WHERE solarSystemID   IN (__PH__)`,
+    `SELECT constellationID AS id, constellationName AS name FROM mapConstellations WHERE constellationID IN (__PH__)`,
+    `SELECT regionID        AS id, regionName        AS name FROM mapRegions        WHERE regionID        IN (__PH__)`,
+  ];
+
+  // Chunk at 500 to stay well under SQLite's bound-parameter limit.
+  for (let i = 0; i < numIds.length; i += 500) {
+    const chunk = numIds.slice(i, i + 500);
+    const ph    = chunk.map(() => '?').join(',');
+    for (const q of queries) {
+      try {
+        const rows = await sdeDb.all(q.replace('__PH__', ph), chunk);
+        rows.forEach(r => { if (r.id && r.name) out[r.id] = r.name; });
+      } catch (_) { /* table absent in this SDE build — skip */ }
+    }
+  }
+  return out;
+}
+
 async function resolveNames(ids) {
   const uncached = ids.filter(id => !nameCache[id]);
   if (uncached.length) {
-    const chunks = [];
-    for (let i = 0; i < uncached.length; i += 1000) chunks.push(uncached.slice(i, i + 1000));
-    for (const chunk of chunks) {
+    // 1. Static IDs (types/systems/constellations/regions) come from the SDE.
+    const sdeNames = await resolveNamesFromSde(uncached).catch(() => ({}));
+    for (const id of Object.keys(sdeNames)) nameCache[id] = sdeNames[id];
+
+    // 2. Dynamic IDs (characters/corps/alliances/structures) the SDE can't
+    //    supply may already be in the persistent cache from a prior session.
+    let stillMissing = uncached.filter(id => !nameCache[id]);
+    if (stillMissing.length) {
+      const dbNames = await charInfoDb.getCachedNames(stillMissing).catch(() => ({}));
+      for (const id of Object.keys(dbNames)) nameCache[id] = dbNames[id];
+      stillMissing = stillMissing.filter(id => !nameCache[id]);
+    }
+
+    // 3. Whatever is still unknown is genuinely new — fetch from ESI, then
+    //    persist so it survives the next restart.
+    for (let i = 0; i < stillMissing.length; i += 1000) {
+      const chunk = stillMissing.slice(i, i + 1000);
       try {
         const result = await httpPost(`${ESI_BASE}/v3/universe/names/?datasource=tranquility`, chunk);
-        result.forEach(r => { nameCache[r.id] = r.name; });
+        const fresh  = [];
+        result.forEach(r => {
+          nameCache[r.id] = r.name;
+          fresh.push({ id: r.id, name: r.name, category: r.category || null });
+        });
+        if (fresh.length) charInfoDb.putCachedNames(fresh).catch(() => {});
       } catch { /* skip */ }
     }
   }

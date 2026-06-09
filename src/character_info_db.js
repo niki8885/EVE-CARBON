@@ -29,6 +29,18 @@ async function initCharacterDb(dataDir) {
   await charDb.run('PRAGMA journal_mode=WAL');
   await charDb.run('PRAGMA foreign_keys=ON');
 
+  // Persistent name cache — dynamic ESI-resolved names (characters, corps,
+  // alliances, player structures) that the SDE cannot provide. Created at init
+  // so both the main resolver and the locator can rely on it being present.
+  await charDb.exec(`
+    CREATE TABLE IF NOT EXISTS names_cache (
+      id        INTEGER PRIMARY KEY,
+      name      TEXT NOT NULL,
+      category  TEXT,
+      synced_at INTEGER
+    );
+  `);
+
   // Global migration: add pins_json to every existing pi_colonies table.
   // initCharacterTables migrations are per-character (run on first use),
   // so characters added before this column existed would not receive it
@@ -843,6 +855,9 @@ module.exports = {
   upsertNpcStations,
   upsertUpwellStructures,
   getStationById,
+  // ── Persistent dynamic-name cache ──
+  getCachedNames,
+  putCachedNames,
 };
 // ═══════════════════════════════════════════════════════════════════════════════
 // ── Shared Station / Structure Database ──────────────────────────────────────
@@ -994,4 +1009,53 @@ async function getStationById(id) {
     );
     return row || null;
   } catch { return null; }
+}
+
+// ── Persistent name cache (dynamic, ESI-resolved names) ──────────────────────
+// Only stores names the SDE cannot supply — characters, corporations,
+// alliances, player structures. Shared between main.js's resolveNames() and the
+// locator's esiNamesPost() so a name resolved by one survives restarts and is
+// reused by the other. Static type/system/region names are NOT stored here;
+// they come straight from the read-only SDE on disk.
+async function getCachedNames(ids) {
+  if (!charDb) return {};
+  const numIds = [...new Set((ids || []).map(Number).filter(Boolean))];
+  if (!numIds.length) return {};
+  const out = {};
+  for (let i = 0; i < numIds.length; i += 500) {
+    const chunk = numIds.slice(i, i + 500);
+    const ph    = chunk.map(() => '?').join(',');
+    try {
+      const rows = await charDb.all(
+        `SELECT id, name FROM names_cache WHERE id IN (${ph})`, chunk
+      );
+      rows.forEach(r => { if (r.id && r.name) out[r.id] = r.name; });
+    } catch (_) { /* table missing — ignore */ }
+  }
+  return out;
+}
+
+// Upsert resolved names. entries = [{ id, name, category? }]
+async function putCachedNames(entries) {
+  if (!charDb || !entries || !entries.length) return;
+  const now = Date.now();
+  try {
+    await charDb.run('BEGIN');
+    for (const e of entries) {
+      if (!e || !e.id || !e.name) continue;
+      await charDb.run(
+        `INSERT INTO names_cache (id, name, category, synced_at)
+         VALUES (?,?,?,?)
+         ON CONFLICT(id) DO UPDATE SET
+           name      = excluded.name,
+           category  = COALESCE(excluded.category, category),
+           synced_at = excluded.synced_at`,
+        [Number(e.id), String(e.name), e.category || null, now]
+      );
+    }
+    await charDb.run('COMMIT');
+  } catch (err) {
+    try { await charDb.run('ROLLBACK'); } catch (_) {}
+    console.warn('[CharDB] putCachedNames failed:', err.message);
+  }
 }

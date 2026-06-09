@@ -308,8 +308,9 @@ function renderAssetTree() {
     // ── Group header row ───────────────────────────────────────────────────
     const headerTr = document.createElement('tr');
     headerTr.className = 'asset-group-header';
-    headerTr.dataset.gi       = gi;
-    headerTr.dataset.expanded = isExpanded ? '1' : '0';
+    headerTr.dataset.gi        = gi;
+    headerTr.dataset.expanded  = isExpanded ? '1' : '0';
+    headerTr.dataset.groupKey  = group.key;
     headerTr.innerHTML = `
       <td colspan="5" class="asset-group-header-cell">
         <div class="asset-group-inner">
@@ -378,23 +379,23 @@ function renderAssetTree() {
 // ── Toggle a location group open/closed ───────────────────────────────────────
 function _toggleAssetGroup(e) {
   const headerTr  = e.currentTarget;
-  const gi        = headerTr.dataset.gi;
   const expanding = headerTr.dataset.expanded !== '1';
 
   headerTr.dataset.expanded = expanding ? '1' : '0';
   const chev = headerTr.querySelector('.asset-group-chevron');
   if (chev) chev.textContent = expanding ? '▼' : '▶';
 
-  // Persist state by location key stored as a sibling data attr
-  const key = headerTr.dataset.groupKey || gi;
+  const key = headerTr.dataset.groupKey || headerTr.dataset.gi;
   window._assetGroupState[key] = expanding;
 
-  // Toggle all item rows that share the same group index
-  const tbody = headerTr.closest('tbody');
-  if (!tbody) return;
-  tbody.querySelectorAll(`.asset-item-row[data-gi="${gi}"]`).forEach(row => {
-    row.classList.toggle('asset-row-hidden', !expanding);
-  });
+  // Walk forward through siblings until the next group header, toggling each item row.
+  // Sibling traversal is reliable because item rows are always rendered immediately
+  // after their parent header row in the DOM.
+  let sibling = headerTr.nextElementSibling;
+  while (sibling && !sibling.classList.contains('asset-group-header')) {
+    sibling.classList.toggle('asset-row-hidden', !expanding);
+    sibling = sibling.nextElementSibling;
+  }
 }
 
 // ── Update price cells and group value totals ─────────────────────────────────

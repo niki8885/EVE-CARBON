@@ -2,8 +2,13 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('eveAPI', {
 
-  // Full character sync → character_information.db
+  // Full character sync → character_information.db (manual SYNC button)
   syncCharacterFull:        (characterId) => ipcRenderer.invoke('sync-character-full', characterId),
+
+  // Frequent-cadence auto-refresh: core data only (no assets), plus a separate
+  // asset sync that self-skips unless assets are older than ASSET_STALE_MS (6 h).
+  syncCharacterCore:           (characterId) => ipcRenderer.invoke('sync-character-core', characterId),
+  syncCharacterAssetsIfStale:  (characterId) => ipcRenderer.invoke('sync-character-assets-if-stale', characterId),
 
   // Read stored character data from CharDB
   getCharacterInfoDb:       (characterId) => ipcRenderer.invoke('get-character-info-db', characterId),
