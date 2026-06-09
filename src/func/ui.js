@@ -92,12 +92,17 @@ function toggleNavigation() {
   navCollapsed = !navCollapsed;
   const nav       = document.getElementById('sidebarNav');
   const toggleBtn = document.getElementById('navToggleBtn');
+  const sidebar   = document.querySelector('.sidebar');
   if (navCollapsed) {
     nav.classList.add('nav-collapsed');
+    // Collapse the whole column, not just the nav list, so the sidebar
+    // actually narrows to icon width and the main content reflows wider.
+    sidebar?.classList.add('nav-collapsed');
     toggleBtn.classList.add('collapsed');
     toggleBtn.textContent = '◀';
   } else {
     nav.classList.remove('nav-collapsed');
+    sidebar?.classList.remove('nav-collapsed');
     toggleBtn.classList.remove('collapsed');
     toggleBtn.textContent = '▶';
   }
