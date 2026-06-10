@@ -870,6 +870,9 @@ module.exports = {
   upsertNpcStations,
   upsertUpwellStructures,
   getStationById,
+  // ── Structure-name repair ──
+  purgePoisonedStations,
+  clearFallbackAssetLocations,
   // ── Persistent dynamic-name cache ──
   getCachedNames,
   putCachedNames,
@@ -1024,6 +1027,53 @@ async function getStationById(id) {
     );
     return row || null;
   } catch { return null; }
+}
+
+// ── Structure-name repair ────────────────────────────────────────────────────
+// An older build let ESI error bodies ("No structure found with that ID!",
+// "Forbidden", …) get stored as structure names. These two helpers clean up the
+// damage so the locator can re-resolve from scratch.
+
+// SQL fragment matching a poisoned / non-name value in a `name`-like column.
+const _POISON_LIKE = (col) =>
+  `(${col} LIKE '%No structure found%' OR ${col} LIKE '%not found%'
+    OR ${col} LIKE '%Forbidden%' OR LOWER(${col}) LIKE '%error%')`;
+
+// Delete poisoned rows from the shared station/structure tables. Returns count.
+async function purgePoisonedStations() {
+  if (!charDb) return 0;
+  let removed = 0;
+  for (const t of ['upwell_structures', 'npc_stations']) {
+    try {
+      const r = await charDb.run(`DELETE FROM ${t} WHERE ${_POISON_LIKE('name')}`);
+      removed += r?.changes || 0;
+    } catch (_) { /* table may not exist yet */ }
+  }
+  return removed;
+}
+
+// Null out the location fields of a character's asset rows whose location_name
+// is poisoned OR a generic fallback ("Structure {id}" / "Location {id}") so
+// getUnresolvedAssetLocations() will pick them up for re-resolution. Returns the
+// number of rows cleared.
+async function clearFallbackAssetLocations(characterId) {
+  if (!charDb) return 0;
+  const p = `char_${characterId}`;
+  try {
+    const r = await charDb.run(`
+      UPDATE ${p}_assets SET
+        location_name = NULL, solar_system_id = NULL, solar_system_name = NULL,
+        region_id = NULL, region_name = NULL, security_status = NULL,
+        owner_id = NULL, owner_name = NULL
+      WHERE location_name LIKE 'Structure %'
+         OR location_name LIKE 'Location %'
+         OR ${_POISON_LIKE('location_name')}
+    `);
+    return r?.changes || 0;
+  } catch (e) {
+    console.error(`[CharDB] clearFallbackAssetLocations failed for ${characterId}:`, e.message);
+    return 0;
+  }
 }
 
 // ── Persistent name cache (dynamic, ESI-resolved names) ──────────────────────

@@ -57,6 +57,7 @@ contextBridge.exposeInMainWorld('eveAPI', {
   getProductForBlueprint:(id)      => ipcRenderer.invoke('get-product-for-blueprint', id),
   getWalletBalance:      (charId)  => ipcRenderer.invoke('get-wallet', charId),
   getJitaPrices:         (typeIds) => ipcRenderer.invoke('get-jita-prices', typeIds),
+  getTypeMetadata:       (typeIds) => ipcRenderer.invoke('get-type-metadata', typeIds),
 
   // Jobs
   getCharacterJobs:       (characterId) => ipcRenderer.invoke('get-character-jobs', characterId),
@@ -66,6 +67,7 @@ contextBridge.exposeInMainWorld('eveAPI', {
   // Assets
   syncAssets:    (charId) => ipcRenderer.invoke('sync-assets', charId),
   syncAllAssets: ()       => ipcRenderer.invoke('sync-all-assets'),
+  repairStructureLocations: () => ipcRenderer.invoke('repair-structure-locations'),
   getAssets:     (charId) => ipcRenderer.invoke('get-assets', charId),
   getAllAssets:   ()       => ipcRenderer.invoke('get-all-assets'),
 
@@ -169,6 +171,7 @@ contextBridge.exposeInMainWorld('eveAPI', {
       'jabber-message',
       'ping-file-updated',
       'ping-alert-data',
+      'repair-progress',
       'sde-update-progress',
       'updater-download-progress',
     ];

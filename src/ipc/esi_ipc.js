@@ -386,6 +386,60 @@ function registerEsiHandlers({
     return { materials, productTypeId, productName, productQty };
   });
 
+  // ─── IPC: SDE type metadata (group / category / slot / meta / tech) ─────────
+  // Static SDE data backing the assets-table columns. Batch-resolved from the
+  // local SDE — no ESI. Returns { [typeId]: { group, category, slot,
+  // metaLevel, techLevel } }, with nulls where a field doesn't apply.
+  ipcHandle('get-type-metadata', async (_, typeIds) => {
+    const sdeDb = getSdeDb();
+    if (!sdeDb || !Array.isArray(typeIds) || !typeIds.length) return {};
+    const ids = [...new Set(typeIds.map(Number).filter(Boolean))];
+    const out = {};
+    ids.forEach(id => { out[id] = { group: null, category: null, slot: null, metaLevel: null, techLevel: null }; });
+
+    // Dogma effect IDs → fitting slot.
+    const SLOT_BY_EFFECT = { 12: 'High', 13: 'Medium', 11: 'Low', 2663: 'Rig' };
+
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      const ph    = chunk.map(() => '?').join(',');
+
+      // Group + category (invTypes → invGroups → invCategories)
+      try {
+        const rows = await sdeDb.all(
+          `SELECT t.typeID AS id, g.groupName AS grp, c.categoryName AS cat
+             FROM invTypes t
+             LEFT JOIN invGroups     g ON g.groupID    = t.groupID
+             LEFT JOIN invCategories c ON c.categoryID = g.categoryID
+            WHERE t.typeID IN (${ph})`, chunk);
+        rows.forEach(r => { if (out[r.id]) { out[r.id].group = r.grp || null; out[r.id].category = r.cat || null; } });
+      } catch (_) { /* table layout differs — leave nulls */ }
+
+      // Meta level (attr 633) + tech level (attr 422)
+      try {
+        const rows = await sdeDb.all(
+          `SELECT typeID AS id, attributeID AS attr, COALESCE(valueInt, valueFloat) AS val
+             FROM dgmTypeAttributes
+            WHERE attributeID IN (422, 633) AND typeID IN (${ph})`, chunk);
+        rows.forEach(r => {
+          if (!out[r.id]) return;
+          if (r.attr === 633) out[r.id].metaLevel = r.val != null ? Math.round(r.val) : null;
+          if (r.attr === 422) out[r.id].techLevel = r.val != null ? Math.round(r.val) : null;
+        });
+      } catch (_) {}
+
+      // Fitting slot (dogma effects)
+      try {
+        const rows = await sdeDb.all(
+          `SELECT typeID AS id, effectID AS eff
+             FROM dgmTypeEffects
+            WHERE effectID IN (11, 12, 13, 2663) AND typeID IN (${ph})`, chunk);
+        rows.forEach(r => { if (out[r.id] && SLOT_BY_EFFECT[r.eff]) out[r.id].slot = SLOT_BY_EFFECT[r.eff]; });
+      } catch (_) {}
+    }
+    return out;
+  });
+
   // ─── IPC: SDE solar system name lookup (offline, no ESI needed) ─────────────
   // Accepts solar_system_id values and returns { id: systemName }.
   ipcHandle('sde-get-system-names', async (_, systemIds) => {

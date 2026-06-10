@@ -38,6 +38,39 @@ function _formatAssetIsk(total) {
     : total.toFixed(2);
 }
 
+// ── Static type metadata (group / category / slot / meta / tech) ─────────────
+// Sourced from the SDE via get-type-metadata (no ESI). Cached per type_id since
+// it never changes; populated lazily and rendered into the extra asset columns.
+let typeMetaCache = {};
+
+async function _ensureTypeMeta(typeIds) {
+  const missing = [...new Set((typeIds || []).map(Number).filter(Boolean))]
+    .filter(t => !typeMetaCache[t]);
+  if (!missing.length) return typeMetaCache;
+  try {
+    const meta = await window.eveAPI.getTypeMetadata(missing);
+    Object.assign(typeMetaCache, meta || {});
+  } catch (_) { /* leave blanks */ }
+  return typeMetaCache;
+}
+
+// Fill the metadata columns of every item row from typeMetaCache. Cells are
+// located by class, so this is safe regardless of column reorder.
+function _updateAssetMetaCells() {
+  const tbody = document.querySelector('#assetTable tbody');
+  if (!tbody) return;
+  tbody.querySelectorAll('tr.asset-item-row').forEach(row => {
+    const m = typeMetaCache[Number(row.dataset.typeId)];
+    if (!m) return;
+    const set = (sel, val) => { const td = row.querySelector(sel); if (td) td.textContent = val; };
+    set('.asset-item-group-cell',    m.group    || '');
+    set('.asset-item-category-cell', m.category || '');
+    set('.asset-item-slot-cell',     m.slot     || '');
+    set('.asset-item-meta-cell', m.metaLevel != null ? String(m.metaLevel) : 'None');
+    set('.asset-item-tech-cell', m.techLevel != null ? String(m.techLevel) : 'None');
+  });
+}
+
 // ── Read all assets from character_information.db (one call per character) ───
 // Returns a flat array with characterId / characterName attached, matching the
 // shape the rest of the code expects. No ESI call is made here.
@@ -138,6 +171,35 @@ async function loadAssets() {
     }
     if (assetSummary) assetSummary.textContent = 'Asset load failed.';
     throw err;
+  }
+}
+
+// ── Re-resolve poisoned / unresolved structure names ─────────────────────────
+// Triggers the backend repair pass (purge bad cache + force re-resolve through
+// the full locator chain) and reloads the table when done. Slow — streams
+// progress to the app console.
+async function repairAssetLocations() {
+  const btn = document.getElementById('repairLocationsBtn');
+  if (btn && btn.disabled) return;
+  if (btn) { btn._orig = btn.textContent; btn.textContent = '⏳ RESOLVING…'; btn.disabled = true; }
+
+  const onProgress = (data) => {
+    if (data && typeof logToConsole === 'function') {
+      logToConsole(`[Locations] ${data.msg}`, data.done ? 'success' : 'info');
+    }
+  };
+  if (window.eveAPI?.on) window.eveAPI.on('repair-progress', onProgress);
+
+  showToast('Re-resolving structure names — this can take a few minutes…', 'info');
+  try {
+    const r = await window.eveAPI.repairStructureLocations();
+    showToast(`✓ Resolved ${r?.resolved || 0} of ${r?.attempted || 0} structures.`, 'success');
+    if (typeof loadAssets === 'function') await loadAssets();
+  } catch (e) {
+    showToast(`Location repair failed: ${e.message}`, 'error');
+  } finally {
+    if (window.eveAPI?.off) window.eveAPI.off('repair-progress', onProgress);
+    if (btn) { btn.textContent = btn._orig || '⚲ RESOLVE NAMES'; btn.disabled = false; }
   }
 }
 
@@ -276,30 +338,34 @@ function renderAssetTree() {
     return;
   }
 
-  // ── Group by location ──────────────────────────────────────────────────────
-  // Key = location_id so we never merge two different structures even if they
-  // happen to share a display name.
-  const groupMap = new Map(); // locationKey → { meta, items[] }
+  // ── Group by location, then by character within each location ──────────────
+  // Location key = location_id so two distinct structures never merge even if
+  // they share a display name. Within a location, assets are split per owner.
+  const locMap = new Map(); // locKey → { meta, charMap: Map(charId → { ... items[] }) }
   for (const asset of source) {
-    const key = String(asset.location_id || asset.location_name || 'unknown');
-    if (!groupMap.has(key)) {
-      groupMap.set(key, {
-        key,
-        locationName:    asset.location_name    || `Location ${asset.location_id}`,
+    const locKey = String(asset.location_id || asset.location_name || 'unknown');
+    if (!locMap.has(locKey)) {
+      locMap.set(locKey, {
+        key:             locKey,
+        locationName:    asset.location_name     || `Location ${asset.location_id}`,
         solarSystemName: asset.solar_system_name || '',
         regionName:      asset.region_name       || '',
         secStatus:       asset.security_status,
-        ownerName:       asset.owner_name        || '',
-        characterId:     asset.characterId,
-        characterName:   asset.characterName,
-        items: [],
+        charMap:         new Map(),
+        count:           0,
       });
     }
-    groupMap.get(key).items.push(asset);
+    const loc   = locMap.get(locKey);
+    const cId   = String(asset.characterId);
+    if (!loc.charMap.has(cId)) {
+      loc.charMap.set(cId, { characterId: cId, characterName: asset.characterName || `Char ${cId}`, items: [] });
+    }
+    loc.charMap.get(cId).items.push(asset);
+    loc.count++;
   }
 
-  // ── Sort groups: by region → solar system → location name ─────────────────
-  const groups = [...groupMap.values()].sort((a, b) => {
+  // ── Sort locations: region → solar system → location name ──────────────────
+  const locations = [...locMap.values()].sort((a, b) => {
     const ra = a.regionName.localeCompare(b.regionName);
     if (ra !== 0) return ra;
     const sa = a.solarSystemName.localeCompare(b.solarSystemName);
@@ -307,137 +373,202 @@ function renderAssetTree() {
     return a.locationName.localeCompare(b.locationName);
   });
 
-  // ── Collect all type_ids that need prices ──────────────────────────────────
-  const allTypeIds = [...new Set(source.map(a => a.type_id).filter(Boolean))].filter(t => !priceCache[t]);
-  if (allTypeIds.length) {
-    // Fetch in background; cells update when the promise resolves
-    window.eveAPI.getJitaPrices(allTypeIds).then(priceMap => {
+  // ── Background data: Jita prices, CCP adjusted prices, SDE metadata ─────────
+  const sourceTypeIds = [...new Set(source.map(a => a.type_id).filter(Boolean))];
+  const priceTypeIds  = sourceTypeIds.filter(t => !priceCache[t]);
+  if (priceTypeIds.length) {
+    window.eveAPI.getJitaPrices(priceTypeIds).then(priceMap => {
       Object.assign(priceCache, priceMap || {});
       _updateAssetPriceCells();
     }).catch(() => {});
   }
-  // BPO valuation needs CCP adjusted prices; load once and refresh cells.
   _ensureMarketPrices().then(() => _updateAssetPriceCells());
+  _ensureTypeMeta(sourceTypeIds).then(() => _updateAssetMetaCells());
 
-  // ── Render each group ──────────────────────────────────────────────────────
-  // Use a numeric group index (gi) as the DOM link between header and item rows.
-  // This avoids CSS.escape issues with location_id strings in querySelectorAll.
+  if (typeof window._assetCharState === 'undefined') window._assetCharState = {};
+
   const frag = document.createDocumentFragment();
 
-  groups.forEach((group, gi) => {
-    const isExpanded = window._assetGroupState[group.key] !== false; // default open
-    const itemCount  = group.items.length;
-
-    // Sec status
+  locations.forEach((loc, li) => {
+    // Sec status badge
     let secColor = '#666';
     let secStr   = '';
-    if (typeof group.secStatus === 'number') {
-      const sec = group.secStatus;
-      secStr  = sec.toFixed(1);
+    if (typeof loc.secStatus === 'number') {
+      const sec = loc.secStatus;
+      secStr = sec.toFixed(1);
       if      (sec >= 0.5) secColor = '#4ecbb0';
       else if (sec >= 0.1) secColor = '#e6c84a';
       else                 secColor = '#e05252';
     }
+    const subtitle = [loc.solarSystemName, loc.regionName].filter(Boolean).join(' · ');
 
-    // System · Region subtitle
-    const subtitle = [group.solarSystemName, group.regionName].filter(Boolean).join(' · ');
-
-    // Character portrait
-    const portrait = `https://images.evetech.net/characters/${group.characterId}/portrait?size=32`;
-
-    // ── Group header row ───────────────────────────────────────────────────
-    const headerTr = document.createElement('tr');
-    headerTr.className = 'asset-group-header';
-    headerTr.dataset.gi        = gi;
-    headerTr.dataset.expanded  = isExpanded ? '1' : '0';
-    headerTr.dataset.groupKey  = group.key;
-    headerTr.innerHTML = `
-      <td colspan="5" class="asset-group-header-cell">
+    // ── Location header row ────────────────────────────────────────────────
+    const locTr = document.createElement('tr');
+    locTr.className = 'asset-group-header asset-loc-header';
+    locTr.dataset.locKey = loc.key;
+    locTr.innerHTML = `
+      <td colspan="10" class="asset-group-header-cell">
         <div class="asset-group-inner">
-          <span class="asset-group-chevron">${isExpanded ? '▼' : '▶'}</span>
-          <img class="asset-group-portrait"
-               src="${portrait}"
-               alt="${escHtml(group.characterName)}"
-               title="${escHtml(group.characterName)}" />
+          <span class="asset-group-chevron"></span>
           ${secStr ? `<span class="asset-group-sec" style="color:${secColor}">${secStr}</span>` : ''}
-          <span class="asset-group-location">${escHtml(group.locationName)}</span>
+          <span class="asset-group-location">${escHtml(loc.locationName)}</span>
           ${subtitle ? `<span class="asset-group-subtitle">· ${escHtml(subtitle)}</span>` : ''}
           <span class="asset-group-spacer"></span>
-          <span class="asset-group-count">${itemCount.toLocaleString()} item${itemCount !== 1 ? 's' : ''}</span>
-          <span class="asset-group-value" data-gi="${gi}">—</span>
+          <span class="asset-group-count">${loc.count.toLocaleString()} item${loc.count !== 1 ? 's' : ''}</span>
+          <span class="asset-group-value asset-loc-value" data-loc-key="${escHtml(loc.key)}">—</span>
         </div>
       </td>`;
-    headerTr.addEventListener('click', _toggleAssetGroup);
-    frag.appendChild(headerTr);
+    frag.appendChild(locTr);
 
-    // ── Item rows ──────────────────────────────────────────────────────────
-    const sorted = [...group.items].sort((a, b) =>
-      (a.name || a.type_name || '').localeCompare(b.name || b.type_name || ''));
+    // ── Character sub-groups, sorted by name ───────────────────────────────
+    const chars = [...loc.charMap.values()].sort((a, b) =>
+      a.characterName.localeCompare(b.characterName));
 
-    for (const asset of sorted) {
-      const itemTr = document.createElement('tr');
-      itemTr.className        = 'asset-item-row' + (isExpanded ? '' : ' asset-row-hidden');
-      itemTr.dataset.gi       = gi;
-      itemTr.dataset.typeId   = asset.type_id  || '';
-      itemTr.dataset.quantity = asset.quantity || 1;
-      itemTr.dataset.isBpc    = asset.is_bpc != null ? String(asset.is_bpc) : '';
+    chars.forEach((ch, ci) => {
+      const charKey = `${loc.key}|${ch.characterId}`;
+      const portrait = `https://images.evetech.net/characters/${ch.characterId}/portrait?size=32`;
 
-      const qty      = asset.quantity || 1;
-      const itemName = asset.name || asset.type_name || `Type ${asset.type_id}`;
-      const vol      = asset.volume != null ? Number(asset.volume).toFixed(2) : '—';
+      const charTr = document.createElement('tr');
+      charTr.className = 'asset-char-header';
+      charTr.dataset.locKey  = loc.key;
+      charTr.dataset.charKey = charKey;
+      charTr.innerHTML = `
+        <td colspan="10" class="asset-char-header-cell">
+          <div class="asset-char-inner">
+            <span class="asset-char-chevron"></span>
+            <img class="asset-char-portrait" src="${portrait}"
+                 alt="${escHtml(ch.characterName)}" title="${escHtml(ch.characterName)}" />
+            <span class="asset-char-name">${escHtml(ch.characterName)}</span>
+            <span class="asset-group-spacer"></span>
+            <span class="asset-group-count">${ch.items.length.toLocaleString()} item${ch.items.length !== 1 ? 's' : ''}</span>
+            <span class="asset-char-value" data-char-key="${escHtml(charKey)}">—</span>
+          </div>
+        </td>`;
+      frag.appendChild(charTr);
 
-      const iconHtml = asset.type_id
-        ? `<img class="asset-type-icon"
-                src="https://images.evetech.net/types/${asset.type_id}/icon?size=32"
-                alt="" loading="lazy" />`
-        : `<span class="asset-type-icon-placeholder"></span>`;
+      // ── Item rows ──────────────────────────────────────────────────────
+      const sorted = [...ch.items].sort((a, b) =>
+        (a.name || a.type_name || '').localeCompare(b.name || b.type_name || ''));
 
-      const unitPrice   = assetUnitPrice(asset.type_id, asset.is_bpc);
-      const totalPrice  = unitPrice * qty;
-      const priceText   = totalPrice > 0
-        ? `${_formatAssetIsk(totalPrice)} ISK`
-        : 'Loading…';
-      const priceClass  = totalPrice > 0 ? 'has-price' : 'price-loading';
+      for (const asset of sorted) {
+        const qty      = asset.quantity || 1;
+        const itemName = asset.name || asset.type_name || `Type ${asset.type_id}`;
+        const vol      = asset.volume != null ? Number(asset.volume).toFixed(2) : '—';
 
-      itemTr.innerHTML = `
-        <td class="asset-item-icon-cell">${iconHtml}</td>
-        <td class="asset-item-name-cell">${escHtml(itemName)}</td>
-        <td class="asset-item-qty-cell">${qty > 1 ? qty.toLocaleString() : ''}</td>
-        <td class="asset-item-vol-cell">${vol}</td>
-        <td class="asset-item-price-cell ${priceClass}"
-            data-type-id="${asset.type_id || ''}"
-            data-quantity="${qty}"
-            data-is-bpc="${asset.is_bpc != null ? asset.is_bpc : ''}">${priceText}</td>`;
+        const iconHtml = asset.type_id
+          ? `<img class="asset-type-icon" src="https://images.evetech.net/types/${asset.type_id}/icon?size=32" alt="" loading="lazy" />`
+          : `<span class="asset-type-icon-placeholder"></span>`;
 
-      frag.appendChild(itemTr);
-    }
+        const md         = typeMetaCache[asset.type_id];
+        const grp        = md ? (md.group || '')    : '';
+        const cat        = md ? (md.category || '') : '';
+        const slot       = md ? (md.slot || '')     : '';
+        const metaTxt    = md ? (md.metaLevel != null ? String(md.metaLevel) : 'None') : '';
+        const techTxt    = md ? (md.techLevel != null ? String(md.techLevel) : 'None') : '';
+
+        const unitPrice  = assetUnitPrice(asset.type_id, asset.is_bpc);
+        const totalPrice = unitPrice * qty;
+        const priceText  = totalPrice > 0 ? `${_formatAssetIsk(totalPrice)} ISK` : 'Loading…';
+        const priceClass = totalPrice > 0 ? 'has-price' : 'price-loading';
+
+        const itemTr = document.createElement('tr');
+        itemTr.className        = 'asset-item-row';
+        itemTr.dataset.locKey   = loc.key;
+        itemTr.dataset.charKey  = charKey;
+        itemTr.dataset.typeId   = asset.type_id  || '';
+        itemTr.dataset.quantity = qty;
+        itemTr.dataset.isBpc    = asset.is_bpc != null ? String(asset.is_bpc) : '';
+
+        itemTr.innerHTML = `
+          <td class="asset-item-icon-cell"     data-col-key="icon">${iconHtml}</td>
+          <td class="asset-item-name-cell"     data-col-key="name">${escHtml(itemName)}</td>
+          <td class="asset-item-qty-cell"      data-col-key="qty">${qty > 1 ? qty.toLocaleString() : ''}</td>
+          <td class="asset-item-group-cell"    data-col-key="group">${escHtml(grp)}</td>
+          <td class="asset-item-category-cell" data-col-key="category">${escHtml(cat)}</td>
+          <td class="asset-item-slot-cell"     data-col-key="slot">${escHtml(slot)}</td>
+          <td class="asset-item-vol-cell"      data-col-key="vol">${vol}</td>
+          <td class="asset-item-meta-cell"     data-col-key="meta">${escHtml(metaTxt)}</td>
+          <td class="asset-item-tech-cell"     data-col-key="tech">${escHtml(techTxt)}</td>
+          <td class="asset-item-price-cell ${priceClass}" data-col-key="price"
+              data-type-id="${asset.type_id || ''}"
+              data-quantity="${qty}"
+              data-is-bpc="${asset.is_bpc != null ? asset.is_bpc : ''}">${priceText}</td>`;
+
+        frag.appendChild(itemTr);
+      }
+    });
   });
 
   tbody.appendChild(frag);
+  _bindAssetCollapse();
+  _applyAssetVisibility();
   _updateAssetPriceCells();
+  _updateAssetMetaCells();
   initAssetColResize();
 }
 
-// ── Toggle a location group open/closed ───────────────────────────────────────
-function _toggleAssetGroup(e) {
-  const headerTr  = e.currentTarget;
-  const expanding = headerTr.dataset.expanded !== '1';
+// ── Collapse state ────────────────────────────────────────────────────────────
+// Two independent levels, both COLLAPSED by default so the page opens as a tidy
+// list of locations and the user drills in: location → characters → items.
+//   window._assetGroupState[locKey]    → location expanded   (true = open)
+//   window._assetCharState[locKey|cId] → character expanded  (true = open)
+// Visibility is derived from state in one pass rather than walking siblings, so
+// nesting can't desync the way a sibling-walk would.
+if (typeof window._assetGroupState === 'undefined') window._assetGroupState = {};
+if (typeof window._assetCharState  === 'undefined') window._assetCharState  = {};
 
-  headerTr.dataset.expanded = expanding ? '1' : '0';
-  const chev = headerTr.querySelector('.asset-group-chevron');
-  if (chev) chev.textContent = expanding ? '▼' : '▶';
+function _applyAssetVisibility() {
+  const tbody = document.querySelector('#assetTable tbody');
+  if (!tbody) return;
 
-  const key = headerTr.dataset.groupKey || headerTr.dataset.gi;
-  window._assetGroupState[key] = expanding;
+  const locOpen  = (k) => window._assetGroupState[k] === true; // default closed
+  const charOpen = (k) => window._assetCharState[k]  === true; // default closed
 
-  // Walk forward through siblings until the next group header, toggling each item row.
-  // Sibling traversal is reliable because item rows are always rendered immediately
-  // after their parent header row in the DOM.
-  let sibling = headerTr.nextElementSibling;
-  while (sibling && !sibling.classList.contains('asset-group-header')) {
-    sibling.classList.toggle('asset-row-hidden', !expanding);
-    sibling = sibling.nextElementSibling;
-  }
+  // Set display inline with !important rather than via a CSS class — inline
+  // !important sits at the top of the cascade, so nothing (theme rules, the
+  // column-reorder system, table-layout) can leave a "hidden" row visible.
+  const show = (row, visible) => {
+    if (visible) row.style.removeProperty('display');
+    else         row.style.setProperty('display', 'none', 'important');
+  };
+
+  tbody.querySelectorAll('tr.asset-loc-header').forEach(h => {
+    const chev = h.querySelector('.asset-group-chevron');
+    if (chev) chev.textContent = locOpen(h.dataset.locKey) ? '▼' : '▶';
+  });
+  tbody.querySelectorAll('tr.asset-char-header').forEach(h => {
+    show(h, locOpen(h.dataset.locKey));
+    const chev = h.querySelector('.asset-char-chevron');
+    if (chev) chev.textContent = charOpen(h.dataset.charKey) ? '▼' : '▶';
+  });
+  tbody.querySelectorAll('tr.asset-item-row').forEach(r => {
+    show(r, locOpen(r.dataset.locKey) && charOpen(r.dataset.charKey));
+  });
+}
+
+// Single delegated click handler bound once to the table body. Survives every
+// re-render (clearing tbody.innerHTML doesn't drop listeners on tbody itself)
+// and any cell reshuffling done by the column reorder system — far more robust
+// than per-row listeners, which is why the chevrons weren't responding before.
+function _bindAssetCollapse() {
+  const tbody = document.querySelector('#assetTable tbody');
+  if (!tbody || tbody._collapseBound) return;
+  tbody._collapseBound = true;
+  tbody.addEventListener('click', (e) => {
+    const charH = e.target.closest('tr.asset-char-header');
+    if (charH) {
+      const k = charH.dataset.charKey;
+      window._assetCharState[k] = !(window._assetCharState[k] === true);
+      _applyAssetVisibility();
+      return;
+    }
+    const locH = e.target.closest('tr.asset-loc-header');
+    if (locH) {
+      const k = locH.dataset.locKey;
+      window._assetGroupState[k] = !(window._assetGroupState[k] === true);
+      _applyAssetVisibility();
+    }
+  });
 }
 
 // ── Update price cells and group value totals ─────────────────────────────────
@@ -469,23 +600,27 @@ function _updateAssetPriceCells() {
     }
   });
 
-  // Roll up group totals keyed by gi (numeric group index)
-  const groupTotals = {};
+  // Roll up totals per character sub-group and per location.
+  const charTotals = {};
+  const locTotals  = {};
   tbody.querySelectorAll('tr.asset-item-row').forEach(row => {
-    const gi     = row.dataset.gi;
     const typeId = Number(row.dataset.typeId);
     const qty    = Number(row.dataset.quantity) || 1;
-    if (!gi || !typeId) return;
-    groupTotals[gi] = (groupTotals[gi] || 0) + assetUnitPrice(typeId, row.dataset.isBpc) * qty;
+    if (!typeId) return;
+    const v  = assetUnitPrice(typeId, row.dataset.isBpc) * qty;
+    const ck = row.dataset.charKey;
+    const lk = row.dataset.locKey;
+    if (ck) charTotals[ck] = (charTotals[ck] || 0) + v;
+    if (lk) locTotals[lk]  = (locTotals[lk]  || 0) + v;
   });
 
-  // Write totals into header value spans (also keyed by gi)
-  tbody.querySelectorAll('.asset-group-value[data-gi]').forEach(el => {
-    const gi    = el.dataset.gi;
-    const total = groupTotals[gi] || 0;
-    el.textContent = total > 0
-      ? `${_formatAssetIsk(total)} ISK`
-      : '—';
+  tbody.querySelectorAll('.asset-char-value[data-char-key]').forEach(el => {
+    const t = charTotals[el.dataset.charKey] || 0;
+    el.textContent = t > 0 ? `${_formatAssetIsk(t)} ISK` : '—';
+  });
+  tbody.querySelectorAll('.asset-loc-value[data-loc-key]').forEach(el => {
+    const t = locTotals[el.dataset.locKey] || 0;
+    el.textContent = t > 0 ? `${_formatAssetIsk(t)} ISK` : '—';
   });
 }
 

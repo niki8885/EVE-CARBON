@@ -46,6 +46,12 @@
         <option value="">All Corps</option>
       </select>
 
+      <button class="icon-btn" id="repairLocationsBtn" onclick="repairAssetLocations()"
+              title="Re-resolve structures showing as 'No structure found' or 'Structure {id}'"
+              style="padding:7px 14px; font-size:12px;">
+        ⚲ RESOLVE NAMES
+      </button>
+
       <button class="icon-btn" onclick="loadAssets()"
               title="Reload from local DB" style="padding:7px 14px; font-size:12px;">
         ⟳ RELOAD
@@ -61,27 +67,37 @@
           colgroup gives the browser concrete column widths before JS fires.
           initAssetColResize() overrides these via th inline styles on every render,
           but having them here prevents columns collapsing to zero on first paint.
-          Order: Icon | Item | Qty | Volume | Jita 4-4 Value
+          Order: Icon | Name | Qty | Group | Category | Slot | Volume | Meta | Tech | Est. Price
         -->
         <colgroup>
           <col style="width:40px;">
-          <col style="width:320px;">
-          <col style="width:80px;">
-          <col style="width:110px;">
+          <col style="width:240px;">
+          <col style="width:70px;">
           <col style="width:150px;">
+          <col style="width:110px;">
+          <col style="width:70px;">
+          <col style="width:100px;">
+          <col style="width:80px;">
+          <col style="width:80px;">
+          <col style="width:130px;">
         </colgroup>
         <thead>
           <tr>
-            <th class="th-icon"           draggable="true" data-col-key="icon" ><span class="col-resize-handle"></span></th>
-            <th class="th-item"           draggable="true" data-col-key="item" >Item<span class="col-resize-handle"></span></th>
-            <th class="th-right th-qty"   draggable="true" data-col-key="qty"  >Qty<span class="col-resize-handle"></span></th>
-            <th class="th-right th-vol"   draggable="true" data-col-key="vol"  >Volume (m³)<span class="col-resize-handle"></span></th>
-            <th class="th-right th-price" draggable="true" data-col-key="price">Jita 4-4 Value</th>
+            <th class="th-icon"             draggable="true" data-col-key="icon"    ><span class="col-resize-handle"></span></th>
+            <th class="th-item"             draggable="true" data-col-key="name"    >Name<span class="col-resize-handle"></span></th>
+            <th class="th-right th-qty"     draggable="true" data-col-key="qty"     >Quantity<span class="col-resize-handle"></span></th>
+            <th class="th-group"            draggable="true" data-col-key="group"   >Group<span class="col-resize-handle"></span></th>
+            <th class="th-category"         draggable="true" data-col-key="category">Category<span class="col-resize-handle"></span></th>
+            <th class="th-slot"             draggable="true" data-col-key="slot"    >Slot<span class="col-resize-handle"></span></th>
+            <th class="th-right th-vol"     draggable="true" data-col-key="vol"     >Volume (m³)<span class="col-resize-handle"></span></th>
+            <th class="th-right th-meta"    draggable="true" data-col-key="meta"    >Meta Level<span class="col-resize-handle"></span></th>
+            <th class="th-right th-tech"    draggable="true" data-col-key="tech"    >Tech Level<span class="col-resize-handle"></span></th>
+            <th class="th-right th-price"   draggable="true" data-col-key="price"   >Est. Price</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td colspan="5" class="loading-row">
+            <td colspan="10" class="loading-row">
               No assets loaded yet — sync a character on the Characters page first.
             </td>
           </tr>
@@ -105,11 +121,16 @@
 
   /* ── Column definitions (order here = default visual order) ────────────── */
   var COL_DEFAULTS = [
-    { key: 'icon',  width: 40  },
-    { key: 'item',  width: 320 },
-    { key: 'qty',   width: 80  },
-    { key: 'vol',   width: 110 },
-    { key: 'price', width: 150 }
+    { key: 'icon',     width: 40  },
+    { key: 'name',     width: 240 },
+    { key: 'qty',      width: 70  },
+    { key: 'group',    width: 150 },
+    { key: 'category', width: 110 },
+    { key: 'slot',     width: 70  },
+    { key: 'vol',      width: 100 },
+    { key: 'meta',     width: 80  },
+    { key: 'tech',     width: 80  },
+    { key: 'price',    width: 130 }
   ];
 
   var STORAGE_WIDTHS = 'assetColWidths';   /* { key: px }        */

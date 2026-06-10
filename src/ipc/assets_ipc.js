@@ -252,6 +252,60 @@ function registerAssetHandlers({
     return result;
   });
 
+  // ─── IPC: Repair poisoned / unresolved structure names ───────────────────
+  // Cleans up structures that show as "No structure found with that ID!" (an
+  // ESI error an old build cached) or the generic "Structure {id}" fallback,
+  // then force-re-resolves them through the full locator chain (incl. the
+  // zKillboard / adam4eve scrapes that the normal backoff skips). Slow — runs
+  // in the background and streams progress via 'repair-progress'.
+  ipcHandle('repair-structure-locations', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const report = (msg, done) => {
+      console.log(`[Repair] ${msg}`);
+      if (win && !win.isDestroyed()) win.webContents.send('repair-progress', { msg, done: !!done });
+    };
+
+    // 1. Purge poisoned rows from the shared station cache so they can't be
+    //    re-applied to assets on the next sync.
+    const purged = await charInfoDb.purgePoisonedStations().catch(() => 0);
+    report(`Cleared ${purged} bad cached structure name(s).`);
+
+    const db       = loadDB();
+    const accounts = Object.values(db.accounts || {});
+    let attempted = 0, resolved = 0;
+
+    for (const acc of accounts) {
+      const cid = acc.characterId;
+      // 2. Null poisoned / fallback asset location names → marks them unresolved.
+      await charInfoDb.clearFallbackAssetLocations(cid).catch(() => {});
+      const unresolved = await charInfoDb.getUnresolvedAssetLocations(cid).catch(() => []);
+      if (!unresolved.length) continue;
+      report(`${acc.characterName}: re-resolving ${unresolved.length} location(s)…`);
+
+      // 3. Force-resolve, concurrency-limited so we don't hammer the scrapers.
+      const CONCURRENCY = 6;
+      let i = 0, fixed = 0;
+      async function worker() {
+        while (i < unresolved.length) {
+          const id = unresolved[i++];
+          attempted++;
+          try {
+            const geo = await getLocator().resolveLocation(id, cid, true); // force = full chain
+            if (geo && (geo.name || geo.solar_system_id)) {
+              await charInfoDb.updateAssetLocation(cid, id, geo);
+              if (geo.name && !/^(Structure|Location) /.test(geo.name)) { fixed++; resolved++; }
+            }
+          } catch (_) { /* leave unresolved */ }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, unresolved.length) }, worker));
+      report(`${acc.characterName}: ✓ ${fixed} resolved.`);
+    }
+
+    report(`Done — ${resolved} of ${attempted} structures resolved a real name.`, true);
+    return { purged, attempted, resolved };
+  });
+
   // ─── IPC: Get saved assets for a single character (from JSON DB) ──────────
   ipcHandle('get-assets', (_, characterId) => {
     const db = loadDB();

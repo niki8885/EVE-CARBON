@@ -253,6 +253,48 @@ tbody tr:first-child.asset-group-header .asset-group-header-cell {
   flex-shrink: 0;
 }
 
+/* ── CHARACTER SUB-GROUP HEADER (nested under a location) ───────────────────── */
+.asset-char-header { cursor: pointer; user-select: none; }
+.asset-char-header:hover .asset-char-header-cell { background: rgba(255,255,255,0.035); }
+.asset-char-header-cell {
+  padding: 4px 12px 4px 26px !important;   /* indented one level under the location */
+  background: rgba(255,255,255,0.012);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.asset-char-inner { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.asset-char-chevron {
+  font-size: 9px; color: var(--text-3); width: 10px; flex-shrink: 0;
+  transition: transform 0.15s ease; font-style: normal;
+}
+.asset-char-portrait {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.1); object-fit: cover; flex-shrink: 0;
+}
+.asset-char-name {
+  font-size: 11px; color: var(--text-2); font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.asset-char-value {
+  font-size: 10px; color: var(--liquidisk); font-family: var(--mono);
+  white-space: nowrap; min-width: 110px; text-align: right; flex-shrink: 0;
+}
+
+/* ── EXTRA ITEM COLUMNS (group / category / slot / meta / tech) ─────────────── */
+.asset-item-group-cell,
+.asset-item-category-cell,
+.asset-item-slot-cell {
+  padding: 5px 10px !important;
+  font-size: 11px; color: var(--text-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.asset-item-meta-cell,
+.asset-item-tech-cell {
+  padding: 5px 10px !important;
+  font-size: 11px; color: var(--text-3); font-family: var(--mono);
+  text-align: right; white-space: nowrap; vertical-align: middle;
+}
+
 /* ── ITEM ROWS ───────────────────────────────────────────────────────────────── */
 .asset-item-row {
   border-bottom: 1px solid rgba(255,255,255,0.025);

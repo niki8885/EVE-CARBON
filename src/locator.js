@@ -49,6 +49,21 @@ const PLAYER_STRUCTURE_MIN_ID = 1_000_000_000_000;
 // Module-level ESI 420 cooldown tracker (shared across all locator instances)
 let _esiErrorLimitUntil = 0;
 
+// True when a stored/cached "name" is not actually a real name: an ESI error
+// body that leaked in from an older build, or a generic fallback. Such values
+// must never be trusted — not from the local DB, not from the cache — or the
+// poison ("No structure found with that ID!") keeps coming back on every sync.
+function _isUnresolvedName(name) {
+  if (!name) return true;
+  const n = String(name).toLowerCase();
+  return n.startsWith('structure ') ||
+         n.startsWith('location ')  ||
+         n.includes('no structure found') ||
+         n.includes('not found')    ||
+         n.includes('forbidden')    ||
+         n.includes('error');
+}
+
 // ─── URL → https.request options ─────────────────────────────────────────────
 // https.request() does NOT accept a plain string URL as the first arg in older
 // Node versions bundled with Electron — always parse it into an options object.
@@ -208,9 +223,10 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
   // so duplicate IDs are handled safely — no extra check needed here.
   async function _persistToStationDb(id, result) {
     if (!result.name) return;
-    // Reject generic fallback strings and any ESI error responses
-    if (result.name.startsWith('Structure ') || result.name.startsWith('Location ')) return;
-    if (result.name.toLowerCase().includes('error') || result.name.toLowerCase().includes('not found')) return;
+    // Reject generic fallbacks AND any ESI error body (incl. "No structure
+    // found with that ID!", which the old narrower guard let through and which
+    // is exactly what poisoned the structure cache).
+    if (_isUnresolvedName(result.name)) return;
     if (result.name.length > 200) return; // sanity guard
     if (typeof upsertNpcStations !== 'function' || typeof upsertUpwellStructures !== 'function') return;
     const numId = Number(id);
@@ -365,22 +381,23 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
   // KEY CHANGE: every path (including zkillboard / adam4eve name-only fallbacks)
   // now ends with a _esiStructureGeo() call to fill in solar_system_id and
   // owner_id so that resolveLocation() can walk the full hierarchy.
-  async function resolveStructureName(structureId, characterId = null, skipScrapes = false) {
+  async function resolveStructureName(structureId, characterId = null, skipScrapes = false, force = false) {
     const id       = Number(structureId);
     const cacheKey = `struct_name_${id}`;
     const cached   = readCache(cacheKey);
-    // Accept cached entry only if it has a real name AND geo data is present
-    if (cached && cached.name && !cached.name.startsWith('Structure ') && cached.solar_system_id) {
+    // Accept cached entry only if it has a REAL name AND geo data. force skips
+    // the cache entirely so a repair pass always re-resolves from scratch.
+    if (!force && cached && !_isUnresolvedName(cached.name) && cached.solar_system_id) {
       return cached;
     }
 
     // ── Step 0: Local DB (npc_stations / upwell_structures) ─────────────────
-    // Check our own DB before touching any network. The upsert functions use
-    // ON CONFLICT(id) DO UPDATE, so there are never duplicate IDs in the tables.
-    if (typeof getStationById === 'function') {
+    // Check our own DB before touching any network. Skipped on a forced repair
+    // (we want fresh resolution, not a possibly-stale DB row).
+    if (!force && typeof getStationById === 'function') {
       try {
         const dbRow = await getStationById(id);
-        if (dbRow && dbRow.name && !dbRow.name.startsWith('Structure ')) {
+        if (dbRow && !_isUnresolvedName(dbRow.name)) {
           const result = {
             name:            dbRow.name,
             solar_system_id: dbRow.solar_system_id || null,
@@ -573,23 +590,23 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
   // ── resolveLocation ──────────────────────────────────────────────────────────
   // Full resolution: name + system / constellation / region / sec / owner.
   // Works for player structures, NPC stations, and bare solar system IDs.
-  async function resolveLocation(locationId, characterId = null) {
+  async function resolveLocation(locationId, characterId = null, force = false) {
     const id       = Number(locationId);
     const cacheKey = `loc_full_${id}`;
     const cached   = readCache(cacheKey);
-    // Reject stale "unknown" entries or structure entries missing geo data
-    if (cached && cached.name &&
-        !cached.name.startsWith('Location ') &&
-        !cached.name.startsWith('Structure ') &&
+    // Accept a cached entry only if it has a real (non-fallback, non-error) name
+    // and the geo a structure needs. force skips the cache for a repair pass.
+    if (!force && cached && !_isUnresolvedName(cached.name) &&
         (id < PLAYER_STRUCTURE_MIN_ID || cached.solar_system_id)) {
       return cached;
     }
 
     // Negative-result backoff: count consecutive resolution failures so we can
     // stop re-running the slow external chain for structures that never resolve.
+    // A forced repair ignores the streak and always runs the full chain.
     const failKey     = `loc_fail_${id}`;
-    const failCount   = Number(readCache(failKey) || 0);
-    const skipScrapes = failCount >= 3;
+    const failCount   = force ? 0 : Number(readCache(failKey) || 0);
+    const skipScrapes = force ? false : (failCount >= 3);
 
     const result = {
       name:               null,
@@ -607,19 +624,19 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
     try {
       if (id >= PLAYER_STRUCTURE_MIN_ID) {
         // ── Player-owned structure ──────────────────────────────────────────
-        const info             = await resolveStructureName(id, characterId, skipScrapes);
+        const info             = await resolveStructureName(id, characterId, skipScrapes, force);
         result.name            = info.name;
         result.solar_system_id = info.solar_system_id;
         result.owner_id        = info.owner_id || null;
 
       } else if (id >= 60_000_000 && id < 64_000_000) {
         // ── NPC station ────────────────────────────────────────────────────
-        // Step 1: Check local DB first
+        // Step 1: Check local DB first (skip on a forced repair / poisoned name)
         let resolvedFromDb = false;
-        if (typeof getStationById === 'function') {
+        if (!force && typeof getStationById === 'function') {
           try {
             const dbRow = await getStationById(id);
-            if (dbRow && dbRow.name) {
+            if (dbRow && !_isUnresolvedName(dbRow.name)) {
               result.name            = dbRow.name;
               result.solar_system_id = dbRow.solar_system_id   || null;
               result.solar_system_name = dbRow.solar_system_name || null;
