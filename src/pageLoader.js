@@ -197,6 +197,8 @@ const PAGE_HTML = {
         </span>
       </div>
       <div class="page-content" style="overflow-y:auto; padding:16px;">
+        <!-- The net-worth tile + character cards are rendered into this grid by
+             renderWallets(); the net-worth tile is a draggable 3×2 grid item. -->
         <div class="wallets-grid" id="walletsGrid"></div>
       </div>
     </div>`,

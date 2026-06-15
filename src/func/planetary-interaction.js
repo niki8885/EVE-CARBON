@@ -322,25 +322,13 @@ function applyPIFilters() {
     return;
   }
 
-  let html = '';
-  for (const { charId, charName, portraitUrl, colonies } of filtered) {
-    html += `
-      <div class="pi-char-section">
-        <div class="pi-char-header">
-          <img class="pi-char-portrait"
-               src="${portraitUrl}"
-               alt="${escHtml(charName)}"
-               onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'54\\' height=\\'54\\'%3E%3Ccircle cx=\\'27\\' cy=\\'27\\' r=\\'27\\' fill=\\'%231a1a1a\\'/%3E%3C/svg%3E'">
-          <span class="pi-char-name">${escHtml(charName)}</span>
-          <span class="pi-char-planet-count">${colonies.length} / 6</span>
-        </div>
-        <div class="pi-grid">
-          ${colonies.map(col => buildColonyCard(col, portraitUrl, charName)).join('')}
-        </div>
-      </div>
-    `;
-  }
-  body.innerHTML = html;
+  // Flatten every character's colonies into one grid. Each card already shows
+  // the owning character's portrait pip, so no per-character grouping is needed.
+  const cards = filtered
+    .flatMap(({ portraitUrl, charName, colonies }) =>
+      colonies.map(col => buildColonyCard(col, portraitUrl, charName)))
+    .join('');
+  body.innerHTML = `<div class="pi-grid">${cards}</div>`;
 }
 
 // ─── Reset all filters ────────────────────────────────────────────────────────

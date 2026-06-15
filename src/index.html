@@ -560,19 +560,12 @@
       <div id="journalTab-overview" class="journal-tab-content"
            style="flex:1; display:flex; align-items:center; justify-content:center; padding:0; overflow:hidden; height:100%;">
         <div style="display:flex; align-items:center; justify-content:center; gap:0; width:100%; height:100%;">
-          <div style="flex:1; display:flex; align-items:center; justify-content:center;
-                      height:100%; border-right:1px solid var(--border);">
-            <div style="position:relative; width:320px; height:320px;">
-              <canvas id="journalRingChart" width="320" height="320"></canvas>
-              <div id="journalRingCenter"
-                   style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-                          text-align:center;pointer-events:none;">
-                <div id="journalRingValue"
-                     style="font-size:22px;font-weight:700;color:var(--text-1);
-                            font-family:var(--mono);white-space:nowrap;">—</div>
-                <div style="font-size:10px;color:var(--text-3);font-family:var(--mono);
-                            letter-spacing:0.08em;margin-top:4px;">30 Days Income</div>
-              </div>
+          <div style="flex:1; display:flex; flex-direction:column; height:100%;
+                      border-right:1px solid var(--border); padding:26px 22px; gap:12px; min-width:0;">
+            <div style="font-size:10px;color:var(--text-3);letter-spacing:0.12em;
+                        font-family:var(--mono);flex:none;">DAILY INCOME &amp; CUMULATIVE GROWTH · 30 DAYS</div>
+            <div style="position:relative; flex:1; min-width:0; min-height:0;">
+              <canvas id="journalRingChart"></canvas>
             </div>
           </div>
           <div style="flex:1; display:flex; flex-direction:column; justify-content:center;

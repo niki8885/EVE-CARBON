@@ -256,8 +256,8 @@
   position:      absolute;
   bottom:        -4px;
   right:         -4px;
-  width:         22px;
-  height:        22px;
+  width:         32px;
+  height:        32px;
   border-radius: 50%;
   border:        2px solid var(--surface-1, var(--bg-card-deep));
   object-fit:    cover;

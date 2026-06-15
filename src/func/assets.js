@@ -744,6 +744,66 @@ async function prefetchAssetsBackground() {
 // Reads wallet balances exclusively from character_information.db via
 // getCharacterData(). Falls back to the dashboard cache only as a secondary
 // layer; never calls ESI directly.
+// ── Wallet grid ordering (drag-to-reorder, persisted to localStorage) ─────────
+// The grid holds the net-worth tile (id "__networth__") plus one tile per
+// character (id = characterId). Both kinds are draggable and share one saved
+// order list.
+const WALLET_ORDER_KEY = 'wallet_card_order';
+const NETWORTH_ID      = '__networth__';
+
+function _getWalletOrder() {
+  try { const o = JSON.parse(localStorage.getItem(WALLET_ORDER_KEY) || 'null'); return Array.isArray(o) ? o : null; }
+  catch (_) { return null; }
+}
+
+// Snapshot the current DOM order of every grid tile into localStorage (on drop).
+function saveWalletOrder() {
+  const grid = document.getElementById('walletsGrid');
+  if (!grid) return;
+  const order = [...grid.querySelectorAll('[data-char-id]')].map(c => c.dataset.charId).filter(Boolean);
+  try { localStorage.setItem(WALLET_ORDER_KEY, JSON.stringify(order)); } catch (_) {}
+}
+
+// Order the grid items. Default: net-worth tile first, then characters by total
+// wealth. A saved manual drag order takes precedence.
+function _orderWalletItems(items) {
+  const wealth = (it) => it.kind === 'card' ? (it.data.rawBalance + it.data.assetValue) : 0;
+  const def = (a, b) => {
+    if (a.kind === 'networth') return -1;
+    if (b.kind === 'networth') return 1;
+    return wealth(b) - wealth(a);
+  };
+  const saved = _getWalletOrder();
+  if (!saved) return [...items].sort(def);
+  const idx = {}; saved.forEach((id, i) => { idx[String(id)] = i; });
+  return [...items].sort((a, b) => {
+    const ai = idx[a.id] ?? 9999, bi = idx[b.id] ?? 9999;
+    return ai !== bi ? ai - bi : def(a, b);
+  });
+}
+
+// Shared drag wiring for any grid tile (net-worth widget or a character card).
+function _wireWalletDrag(el) {
+  el.addEventListener('dragstart', (e) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', el.dataset.charId || '');
+    setTimeout(() => el.classList.add('dragging'), 0);
+  });
+  el.addEventListener('dragend', () => { el.classList.remove('dragging'); saveWalletOrder(); });
+  el.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    const grid = document.getElementById('walletsGrid');
+    const dragging = grid && grid.querySelector('.dragging');
+    if (!dragging || dragging === el) return;
+    const rect   = el.getBoundingClientRect();
+    const before = e.clientY < rect.top    ? true
+                 : e.clientY > rect.bottom  ? false
+                 : e.clientX < rect.left + rect.width / 2;
+    grid.insertBefore(dragging, before ? el : el.nextSibling);
+  });
+  el.addEventListener('drop', (e) => e.preventDefault());
+}
+
 async function renderWallets() {
   const walletsGrid = document.getElementById('walletsGrid');
   if (!walletsGrid) return;
@@ -762,7 +822,11 @@ async function renderWallets() {
     const cachedDash    = await window.eveAPI.cacheGet('dashboard_cache').catch(() => null);
     const cachedWallets = cachedDash?.walletByChar || {};
 
+    // CCP adjusted prices for valuing each character's assets (one cached call).
+    const marketPrices = await window.eveAPI.getMarketPrices().catch(() => ({}));
+
     const cardData = await Promise.all(accounts.map(async (account) => {
+      const cid = String(account.characterId);
       let rawBalance = 0;
       let syncedAt   = null;
 
@@ -773,29 +837,80 @@ async function renderWallets() {
           syncedAt   = charData.wallet.synced_at || null;
         } else {
           // No DB row yet — use dashboard cache if available, otherwise 0.
-          rawBalance = cachedWallets[String(account.characterId)] ?? 0;
+          rawBalance = cachedWallets[cid] ?? 0;
         }
       } catch (e) {
         console.warn(`[Wallets] DB read failed for ${account.characterName}:`, e.message);
-        rawBalance = cachedWallets[String(account.characterId)] ?? 0;
+        rawBalance = cachedWallets[cid] ?? 0;
       }
 
-      return { account, rawBalance, syncedAt };
+      // Asset value from the local DB × CCP adjusted price, with blueprint
+      // copies valued at 0.01 ISK — the same rule the dashboard net worth uses.
+      let assetValue = 0;
+      try {
+        const assets = await window.eveAPI.getCharacterAssetsDb(account.characterId);
+        (Array.isArray(assets) ? assets : []).forEach(a => {
+          let unit;
+          if (Number(a.is_bpc) === 1) unit = 0.01;
+          else { const p = marketPrices[a.type_id] || {}; unit = p.adjusted || p.average || 0; }
+          assetValue += unit * (a.quantity || 1);
+        });
+      } catch (_) { /* leave 0 */ }
+
+      return { account, rawBalance, assetValue, syncedAt };
     }));
 
-    cardData.forEach(({ account, rawBalance, syncedAt }) => {
-      // Format the last-synced timestamp for display.
-      let syncLabel = 'Never synced';
-      if (syncedAt) {
-        const d = new Date(syncedAt);
-        syncLabel = `Synced ${d.toLocaleString()}`;
+    // Aggregate totals for the net-worth tile.
+    const walletByChar = {}, assetByChar = {};
+    let totalWallet = 0, overallValue = 0;
+    cardData.forEach(({ account, rawBalance, assetValue }) => {
+      const cid = String(account.characterId);
+      walletByChar[cid] = rawBalance;  totalWallet  += rawBalance;
+      assetByChar[cid]  = assetValue;  overallValue += assetValue;
+    });
+
+    // ── Render the grid: a draggable 3×2 net-worth tile + character cards ─────
+    const items = [
+      { id: NETWORTH_ID, kind: 'networth' },
+      ...cardData.map(c => ({ id: String(c.account.characterId), kind: 'card', data: c })),
+    ];
+
+    _orderWalletItems(items).forEach(item => {
+      // ── Net-worth tile (compact dashboard widget) ──────────────────────────
+      if (item.kind === 'networth') {
+        const tile = document.createElement('div');
+        tile.className = 'wallet-card wallet-networth-tile';
+        tile.draggable = true;
+        tile.dataset.charId = NETWORTH_ID;
+        tile.innerHTML = `
+          <div class="wallet-networth-head"><span class="dnd-grip">⠿</span> NET WORTH &amp; WEALTH GROWTH</div>
+          <div id="walletsNetWorth" class="wallet-networth-body"></div>`;
+        walletsGrid.appendChild(tile);
+        _wireWalletDrag(tile);
+        if (accounts.length && typeof renderKPIPanel === 'function') {
+          renderKPIPanel(tile.querySelector('#walletsNetWorth'), accounts, totalWallet, overallValue,
+                         totalWallet + overallValue, assetByChar, walletByChar, false, { compact: true });
+        }
+        return;
       }
+
+      // ── Character card: liquid + asset bars (unified theme colours) ────────
+      const { account, rawBalance, assetValue, syncedAt } = item.data;
+      let syncLabel = 'Never synced';
+      if (syncedAt) syncLabel = `Synced ${new Date(syncedAt).toLocaleString()}`;
+
+      // Bars scale to the character's own total so each card shows its split.
+      const charTotal = rawBalance + assetValue || 1;
+      const liquidPct = Math.min(100, (rawBalance  / charTotal) * 100);
+      const assetPct  = Math.min(100, (assetValue  / charTotal) * 100);
 
       const card = document.createElement('div');
       card.className = 'wallet-card';
+      card.draggable = true;
+      card.dataset.charId = account.characterId;
       card.innerHTML = `
         <div class="wallet-header">
-          <img class="wallet-avatar"
+          <img class="wallet-avatar" draggable="false"
                src="https://images.evetech.net/characters/${account.characterId}/portrait?size=64"
                alt="${escHtml(account.characterName)}">
           <div class="wallet-info">
@@ -810,6 +925,18 @@ async function renderWallets() {
             <span class="isk-symbol"> ISK</span>
           </span>
         </div>
+        <div class="wallet-bars">
+          <div class="wallet-bar-row">
+            <span class="wallet-bar-tag" style="color:var(--liquidisk);">Liquid</span>
+            <div class="wallet-bar-track"><div class="wallet-bar-fill liquid" style="width:${liquidPct.toFixed(1)}%"></div></div>
+            <span class="wallet-bar-val">${formatISK(rawBalance)}</span>
+          </div>
+          <div class="wallet-bar-row">
+            <span class="wallet-bar-tag" style="color:var(--assets);">Assets</span>
+            <div class="wallet-bar-track"><div class="wallet-bar-fill assets" style="width:${assetPct.toFixed(1)}%"></div></div>
+            <span class="wallet-bar-val">${formatISK(assetValue)}</span>
+          </div>
+        </div>
         <div class="wallet-footer">
           <span class="wallet-meta">${escHtml(syncLabel)}</span>
           <button class="wallet-action journal-open-btn" data-char-id="${account.characterId}" data-char-name="${escHtml(account.characterName)}">View Journal</button>
@@ -817,10 +944,10 @@ async function renderWallets() {
       walletsGrid.appendChild(card);
       countUp(card.querySelector('.wallet-balance-number'), rawBalance);
 
-      // Wire View Journal button
       card.querySelector('.journal-open-btn').addEventListener('click', () => {
         openWalletJournal(account.characterId, account.characterName);
       });
+      _wireWalletDrag(card);
     });
   } finally {
     walletsGrid._isLoading = false;
@@ -991,14 +1118,8 @@ function renderJournalOverview(entries) {
   // Update income/expense totals
   document.getElementById('journalIncomeTotal').textContent  = formatISK(totalIncome);
   document.getElementById('journalExpenseTotal').textContent = formatISK(totalExpense);
-  document.getElementById('journalRingValue').textContent    = formatISK(totalIncome);
 
-  // Build chart data from income categories only
-  const cats   = Object.keys(incomeByCat).filter(c => incomeByCat[c] > 0);
-  const values = cats.map(c => incomeByCat[c]);
-  const colors = cats.map(c => CATEGORY_COLORS[c] || '#8c8c8c');
-
-  // Legend
+  // ── Income breakdown legend (right column) ──────────────────────────────────
   const legendEl = document.getElementById('journalLegend');
   if (legendEl) {
     const allCats = Object.keys(incomeByCat);
@@ -1006,7 +1127,7 @@ function renderJournalOverview(entries) {
       const pct = totalIncome > 0 ? (incomeByCat[cat] / totalIncome * 100).toFixed(1) : '0.0';
       const amt = formatISK(incomeByCat[cat]);
       return `<div style="display:flex;align-items:center;gap:12px;">
-        <span style="width:12px;height:12px;border-radius:50%;background:${CATEGORY_COLORS[cat]};flex-shrink:0;"></span>
+        <span style="width:12px;height:12px;border-radius:3px;background:${CATEGORY_COLORS[cat]};flex-shrink:0;"></span>
         <span style="font-size:13px;color:var(--text-2);font-family:var(--mono);min-width:44px;">${pct}%</span>
         <span style="font-size:13px;color:var(--text-1);flex:1;">${cat}</span>
         <span style="font-size:12px;color:var(--text-3);font-family:var(--mono);">${amt}</span>
@@ -1014,41 +1135,82 @@ function renderJournalOverview(entries) {
     }).join('');
   }
 
-  // Ring chart
+  // ── Stacked daily income + cumulative growth chart ──────────────────────────
   const canvas = document.getElementById('journalRingChart');
   if (!canvas) return;
-  if (canvas._chartInstance) {
-    canvas._chartInstance.destroy();
-    canvas._chartInstance = null;
-  }
+  if (canvas._chartInstance) { canvas._chartInstance.destroy(); canvas._chartInstance = null; }
   if (typeof Chart === 'undefined') return;
 
-  canvas._chartInstance = new Chart(canvas, {
-    type: 'doughnut',
-    data: {
-      labels: cats,
-      datasets: [{
-        data:            values.length ? values : [1],
-        backgroundColor: values.length ? colors : ['#2a2a2a'],
-        borderColor:     'transparent',
-        borderWidth:     0,
-        hoverOffset:     6,
-      }]
+  const DAY   = 86400000;
+  const days  = 30;
+  const start = now - days * DAY;
+
+  // Bucket income per day by category; build the running cumulative total.
+  const dayCat = Array.from({ length: days }, () => ({ Bounty: 0, Trade: 0, Misc: 0, Transfers: 0 }));
+  recent.forEach(e => {
+    const amt = parseFloat(e.amount) || 0;
+    if (amt < 0) return;                       // income only for the bars
+    const t = e.date ? new Date(e.date).getTime() : 0;
+    let di = Math.floor((t - start) / DAY);
+    if (di < 0) di = 0; else if (di > days - 1) di = days - 1;
+    dayCat[di][classifyEntry(e)] += amt;
+  });
+
+  const labels = Array.from({ length: days }, (_, i) =>
+    new Date(start + i * DAY).toLocaleDateString('en', { day: 'numeric', month: 'short' }));
+
+  const CAT_ORDER   = ['Bounty', 'Trade', 'Misc', 'Transfers'];
+  const barDatasets = CAT_ORDER.map(cat => ({
+    type: 'bar', label: cat, stack: 'income', yAxisID: 'y',
+    data: dayCat.map(d => Math.round(d[cat])),
+    backgroundColor: CATEGORY_COLORS[cat],
+    borderWidth: 0, borderRadius: 2,
+    categoryPercentage: 0.86, barPercentage: 0.96,
+  }));
+
+  let run = 0;
+  const cumulative = dayCat.map(d => {
+    run += d.Bounty + d.Trade + d.Misc + d.Transfers;
+    return Math.round(run);
+  });
+  const lineDataset = {
+    type: 'line', label: 'Cumulative income', yAxisID: 'y1',
+    data: cumulative,
+    borderColor: '#e8e8e8', borderWidth: 2, tension: 0.35,
+    pointRadius: 0, pointHoverRadius: 4, pointBackgroundColor: '#e8e8e8',
+    fill: true,
+    backgroundColor: (c) => {
+      const area = c.chart.chartArea;
+      if (!area) return 'rgba(232,232,232,0.06)';
+      const g = c.chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+      g.addColorStop(0, 'rgba(232,232,232,0.16)');
+      g.addColorStop(1, 'rgba(232,232,232,0)');
+      return g;
     },
+  };
+
+  const fmtAxis = (v) =>
+    v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' :
+    v >= 1e6 ? (v / 1e6).toFixed(0) + 'M' :
+    v >= 1e3 ? (v / 1e3).toFixed(0) + 'k' : v;
+
+  canvas._chartInstance = new Chart(canvas, {
+    type: 'bar',
+    data: { labels, datasets: [...barDatasets, lineDataset] },
     options: {
-      cutout: '86%',
-      responsive: false,
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
         tooltip: {
-          callbacks: {
-            label: ctx => {
-              const v = ctx.raw;
-              const pct = totalIncome > 0 ? (v / totalIncome * 100).toFixed(1) : '0.0';
-              return ` ${pct}%  ${formatISK(v)}`;
-            }
-          }
+          callbacks: { label: ctx => ` ${ctx.dataset.label}: ${formatISK(ctx.parsed.y)}` },
+          itemSort: (a, b) => b.parsed.y - a.parsed.y,
         }
+      },
+      scales: {
+        x:  { stacked: true, ticks: { color: '#6a6a6a', font: { size: 9, family: 'monospace' }, autoSkip: true, maxRotation: 0, maxTicksLimit: 8 }, grid: { display: false } },
+        y:  { stacked: true, beginAtZero: true, ticks: { color: '#6a6a6a', font: { size: 9, family: 'monospace' }, callback: fmtAxis }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y1: { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { color: '#8a8a8a', font: { size: 9, family: 'monospace' }, callback: fmtAxis } },
       }
     }
   });

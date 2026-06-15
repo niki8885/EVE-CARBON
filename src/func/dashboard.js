@@ -835,8 +835,9 @@ async function loadDashboard() {
 
 // ─── KPI Panel Renderer ───────────────────────────────────────────────────────
 
-function renderKPIPanel(container, accounts, totalWallet, overallValue, grandTotal, totalByChar, walletByChar, assetsLoading) {
+function renderKPIPanel(container, accounts, totalWallet, overallValue, grandTotal, totalByChar, walletByChar, assetsLoading, opts = {}) {
   if (!container) return;
+  const compact = !!opts.compact;   // compact = KPIs + growth chart only (no per-character bars)
 
   const TOP_N = 6;
   const allCharData = accounts.map(acc => {
@@ -935,6 +936,7 @@ function renderKPIPanel(container, accounts, totalWallet, overallValue, grandTot
         <div class="dash-kpi-sub">Jita sell estimate</div>
       </div>
     </div>
+    ${compact ? '' : `
     <div class="dash-char-bars" style="margin-bottom:20px;">
       <div class="dash-char-bars-label" style="display:flex;align-items:baseline;gap:8px;">
         WEALTH BY CHARACTER
@@ -943,7 +945,7 @@ function renderKPIPanel(container, accounts, totalWallet, overallValue, grandTot
         </span>
       </div>
       ${barLegend}${charBars}
-    </div>
+    </div>`}
     <div class="dash-wealth-chart-wrap">
       <div class="dash-wealth-chart-label">COMPOUNDED WEALTH GROWTH · 12 MONTHS</div>
       <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:8px;">${legendItems}</div>
@@ -953,14 +955,17 @@ function renderKPIPanel(container, accounts, totalWallet, overallValue, grandTot
                        border:1px dashed var(--border);border-radius:var(--radius);">
              Waiting for asset prices...
            </div>`
-        : `<div style="position:relative;width:100%;height:160px;">
+        : `<div style="position:relative;width:100%;${compact ? 'flex:1;min-height:120px;' : 'height:160px;'}">
              <canvas id="wealthGrowthChart" role="img" aria-label="Compounded wealth growth over 12 months per character">Wealth growth chart</canvas>
            </div>`}
     </div>`;
 
   if (!assetsLoading) {
     requestAnimationFrame(() => {
-      const canvas = document.getElementById('wealthGrowthChart');
+      // Scope to this container — the same widget can be rendered on more than
+      // one page (dashboard + wallets), so a global id lookup could grab the
+      // wrong canvas.
+      const canvas = container.querySelector('#wealthGrowthChart');
       if (!canvas) return;
       if (canvas._chartInstance) canvas._chartInstance.destroy();
 
