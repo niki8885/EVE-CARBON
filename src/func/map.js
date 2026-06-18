@@ -49,6 +49,11 @@ let _allianceTickers    = {};   // {allianceId: ticker}  — cached after first 
 // Pending jump — set by window.mapJumpToSystem before galaxy data is ready
 let _pendingJumpSystemId = null;
 
+// Jump route overlay (set by window.mapShowRoute) + "you are here" marker.
+let _routeIds        = null;   // ordered [systemId] of a plotted route to highlight
+let _pendingRouteIds = null;   // route requested before the galaxy finished loading
+let _youHereId       = null;   // current character's system id ("you are here")
+
 // ── Official EVE security-status colours ──────────────────────────────────────
 function _secColor(sec) {
   if (sec === null || sec === undefined) return '#282828';
@@ -299,6 +304,10 @@ function _render() {
   // Dot radius scales with zoom so systems stay visible when zoomed out
   const dotR  = Math.max(0.7, Math.min(5, _zoom * _MAP_WORLD / 900));
   const lineW = Math.max(0.08, Math.min(1, _zoom * 2.2));
+  // System names only appear once zoomed in past this dot radius; below it region
+  // names are shown instead. Raised from the old 2.2 so mid-zoom doesn't turn
+  // into an unreadable wall of system labels.
+  const SYS_LABEL_DOTR = 3.2;
 
   // Background
   ctx.fillStyle = '#050810';
@@ -322,6 +331,24 @@ function _render() {
     ctx.lineTo(bx, by);
   }
   ctx.stroke();
+
+  // ── Plotted jump route (highlighted over the faint connection mesh) ─────────
+  if (_routeIds && _routeIds.length > 1) {
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(96,200,255,0.95)';
+    ctx.lineWidth   = Math.max(1.5, Math.min(4, _zoom * 4));
+    ctx.lineCap     = 'round';
+    for (let i = 1; i < _routeIds.length; i++) {
+      const a = _sysById[_routeIds[i - 1]], b = _sysById[_routeIds[i]];
+      if (!a || !b) continue;
+      const [ax, ay] = _w2c(a.wx, a.wz);
+      const [bx, by] = _w2c(b.wx, b.wz);
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+    }
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+  }
 
   // ── System dots ───────────────────────────────────────────────────────────
   for (const s of _systems) {
@@ -386,8 +413,9 @@ function _render() {
       ctx.stroke();
     }
 
-    // Label (only when zoomed in enough for it to be legible)
-    if (dotR > 2.2 && _zoom > 0.038) {
+    // System name — only once zoomed in past SYS_LABEL_DOTR (region names show
+    // before that), so medium zoom stays readable instead of becoming a mess.
+    if (dotR > SYS_LABEL_DOTR) {
       const fs = Math.max(8, Math.min(14, dotR * 3.2));
       ctx.font      = `${fs}px var(--mono, monospace)`;
       ctx.fillStyle = 'rgba(190,205,225,0.72)';
@@ -395,13 +423,17 @@ function _render() {
     }
   }
 
-  // ── Region sovereignty labels (sovereignty overlay, zoomed out) ─────────────
-  // Show when individual system names are not yet legible (dotR < 2.5).
-  // Displays: region name (italic, dim) + dominant alliance ticker (bold, coloured).
-  if (_overlay === 'sovereignty' && dotR < 2.5) {
-    // Opacity fades in as dotR drops below 2 (smooth transition)
-    const alpha = Math.min(1, (2.5 - dotR) / 1.2);
-    ctx.globalAlpha  = alpha;
+  // ── Region labels (zoomed out, before system names take over) ───────────────
+  // Shown on every overlay so the galaxy stays readable when zoomed out: region
+  // names appear from the initial zoom and fade out right as system names appear
+  // (dotR → SYS_LABEL_DOTR). The sovereignty overlay additionally shows the
+  // dominant alliance ticker and switches earlier (dotR < 2.5).
+  const _isSov          = _overlay === 'sovereignty';
+  const _regionLabelMax = _isSov ? 2.5 : SYS_LABEL_DOTR;
+  if (dotR < _regionLabelMax) {
+    // Fade out smoothly as the system-name threshold approaches.
+    const fadeSpan = _isSov ? 1.2 : 0.9;
+    ctx.globalAlpha  = Math.min(1, (_regionLabelMax - dotR) / fadeSpan);
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
 
@@ -411,7 +443,7 @@ function _render() {
       if (lcx < -40 || lcx > W + 40 || lcy < -40 || lcy > H + 40) continue;
 
       const regionName = _regions[regionId] || '';
-      const dom        = _regionDomSov[regionId];
+      const dom        = _isSov ? _regionDomSov[regionId] : null;
 
       // Font size: larger when more zoomed in (within zoomed-out range)
       const rfs  = Math.max(10, Math.min(14, _zoom * _MAP_WORLD / 85));
@@ -425,7 +457,7 @@ function _render() {
       ctx.shadowBlur   = 4;
       ctx.fillText(regionName, lcx, lcy - gap);
 
-      // Dominant sov ticker / name — bold, alliance colour
+      // Dominant sov ticker / name — bold, alliance colour (sovereignty only)
       if (dom && dom.label) {
         ctx.font      = `bold ${lfs}px var(--mono, monospace)`;
         ctx.fillStyle = dom.color;
@@ -438,6 +470,54 @@ function _render() {
     ctx.globalAlpha  = 1;
     ctx.textAlign    = 'left';
     ctx.textBaseline = 'alphabetic';
+  }
+
+  // ── Route waypoint markers (start/end labelled) ─────────────────────────────
+  if (_routeIds && _routeIds.length) {
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    _routeIds.forEach((id, i) => {
+      const s = _sysById[id]; if (!s) return;
+      const [cx, cy] = _w2c(s.wx, s.wz);
+      if (cx < -30 || cx > W + 30 || cy < -30 || cy > H + 30) return;
+      const isEnd = (i === 0 || i === _routeIds.length - 1);
+      ctx.beginPath();
+      ctx.arc(cx, cy, isEnd ? 7 : 4.5, 0, Math.PI * 2);
+      ctx.strokeStyle = '#60c8ff';
+      ctx.lineWidth   = 2;
+      ctx.stroke();
+      if (isEnd) {
+        ctx.fillStyle   = '#60c8ff';
+        ctx.font        = 'bold 11px var(--mono, monospace)';
+        ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 4;
+        ctx.fillText(`${s.name} (${i === 0 ? 'start' : 'end'})`, cx, cy - 14);
+        ctx.shadowBlur = 0;
+      }
+    });
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  }
+
+  // ── "You are here" — current character's system ─────────────────────────────
+  if (_youHereId && _sysById[_youHereId]) {
+    const s = _sysById[_youHereId];
+    const [cx, cy] = _w2c(s.wx, s.wz);
+    if (cx > -30 && cx < W + 30 && cy > -30 && cy < H + 30) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+      ctx.strokeStyle = '#4ecbb0';
+      ctx.lineWidth   = 2.5;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#4ecbb0';
+      ctx.fill();
+      ctx.fillStyle   = '#4ecbb0';
+      ctx.font        = 'bold 11px var(--mono, monospace)';
+      ctx.textAlign   = 'center';
+      ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 4;
+      ctx.fillText('◉ YOU', cx, cy + 18);
+      ctx.shadowBlur = 0;
+      ctx.textAlign   = 'left';
+    }
   }
 }
 
@@ -810,6 +890,7 @@ async function initMapPage() {
   // If already loaded, just ensure the canvas fills its container and re-render
   if (_loaded) {
     _onResize();
+    _loadYouAreHere();   // refresh "you are here" (location may have changed)
     return;
   }
 
@@ -851,6 +932,16 @@ async function initMapPage() {
       if (jumpSys) { _flyTo(jumpSys); _showInfo(jumpSys); }
     }
 
+    // Honour a route requested before the galaxy finished loading.
+    if (_pendingRouteIds) {
+      _routeIds = _pendingRouteIds;
+      _pendingRouteIds = null;
+      _fitToSystems(_routeIds);
+    }
+
+    // Mark the selected character's current system.
+    _loadYouAreHere();
+
     // Kick off live overlay fetches in the background (non-blocking)
     _loadLiveData();
 
@@ -879,5 +970,50 @@ window.mapJumpToSystem = function (systemId) {
   } else {
     // Galaxy still loading — store target; initMapPage will honour it on completion
     _pendingJumpSystemId = systemId;
+  }
+};
+
+// ── Fit the viewport to a set of systems (used by the route overlay) ──────────
+function _fitToSystems(ids) {
+  if (!_canvas) return;
+  const pts = (ids || []).map(id => _sysById[id]).filter(Boolean);
+  if (!pts.length) return;
+  const xs = pts.map(p => p.wx), zs = pts.map(p => p.wz);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minZ = Math.min(...zs), maxZ = Math.max(...zs);
+  const pad = 90;
+  const z = Math.min(
+    (_canvas.width  - pad * 2) / Math.max(1, maxX - minX),
+    (_canvas.height - pad * 2) / Math.max(1, maxZ - minZ)
+  );
+  _zoom = Math.max(_MIN_ZOOM, Math.min(0.5, z));   // cap so short routes keep galaxy context
+  const midX = (minX + maxX) / 2, midZ = (minZ + maxZ) / 2;
+  _panX = _canvas.width  / 2 - midX * _zoom;
+  _panY = _canvas.height / 2 - midZ * _zoom;
+}
+
+// Load the selected character's current system for the "you are here" marker.
+async function _loadYouAreHere() {
+  try {
+    const cid = (typeof selectedCharacterId !== 'undefined' && selectedCharacterId) ? selectedCharacterId : null;
+    if (!cid || !window.eveAPI || !window.eveAPI.getCharacterData) { _youHereId = null; return; }
+    const d = await window.eveAPI.getCharacterData(cid);
+    const sysId = d && d.location && d.location.solar_system_id;
+    _youHereId = (sysId && _sysById[sysId]) ? sysId : null;
+    if (_youHereId) _scheduleRender();
+  } catch (_) { _youHereId = null; }
+}
+
+// ── Global bridge — called by the Jump Planner "Show on Map" button ───────────
+// Highlights an ordered list of system IDs as a route and fits the view to it.
+window.mapShowRoute = function (systemIds) {
+  const ids = (systemIds || []).map(Number).filter(Boolean);
+  if (!ids.length) return;
+  if (_loaded) {
+    _routeIds = ids;
+    _fitToSystems(ids);
+    _scheduleRender();
+  } else {
+    _pendingRouteIds = ids;
   }
 };

@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Stages run in strict order via `needs`: lint → test → coverage → build.
+# A later stage only starts once the earlier one is green.
+jobs:
+  # ── Stage 1: lint (syntax) + dependency audit ───────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Syntax / lint check
+        run: npm run lint
+      # Reports known vulnerabilities. Non-blocking: a new upstream advisory
+      # shouldn't turn every PR red. Drop continue-on-error to make it a gate.
+      - name: Security audit
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+  # ── Stage 2: unit tests (only if lint passed) ───────────────────────────────
+  test:
+    name: Unit tests
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Run tests
+        run: npm test
+
+  # ── Stage 3: coverage tracking (only if tests passed) ───────────────────────
+  coverage:
+    name: Coverage
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Coverage report
+        run: npm run coverage
+
+  # ── Stage 4: build matrix (only if coverage passed) ─────────────────────────
+  build:
+    name: Build (${{ matrix.os }})
+    needs: coverage
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: --win --x64
+            artifact: dist/*.exe
+          - os: macos-latest
+            target: --mac
+            artifact: dist/*.dmg
+          - os: ubuntu-latest
+            target: --linux
+            artifact: dist/*.AppImage
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Full install: postinstall rebuilds the native sqlite3 module for Electron.
+      - name: Install dependencies
+        run: npm ci
+      # The build bundles .env and data/ via extraResources (package.json "build").
+      # Both are gitignored, so CI provides stubs — we only verify packaging works,
+      # not that the real SDE is present (releases run `npm run build-*` for that).
+      - name: Stub build inputs
+        shell: bash
+        run: |
+          cp .env.example .env
+          mkdir -p data
+          : > data/sde.sql
+      - name: Build
+        shell: bash
+        run: npx --no-install electron-builder ${{ matrix.target }} --publish never
+      - name: Verify artifact exists
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(${{ matrix.artifact }})
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::Build produced no artifact matching '${{ matrix.artifact }}'"
+            ls -la dist || true
+            exit 1
+          fi
+          echo "Built artifact(s): ${files[*]}"

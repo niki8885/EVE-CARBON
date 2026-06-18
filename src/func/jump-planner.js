@@ -26,7 +26,7 @@ const JP_SHIPS = [
   { id: 'super',   name: 'Supercarrier',    range: 3.0, fuel: 3000 },
   { id: 'titan',   name: 'Titan',           range: 3.0, fuel: 3000 },
   { id: 'blops',   name: 'Black Ops',       range: 4.0, fuel: 700  },
-  { id: 'jf',      name: 'Jump Freighter',  range: 5.0, fuel: 8800 },
+  { id: 'jf',      name: 'Jump Freighter',  range: 5.0, fuel: 10000 },
   { id: 'rorqual', name: 'Rorqual',         range: 5.0, fuel: 4000 },
 ];
 
@@ -235,8 +235,32 @@ async function openJumpPlanner() {
     ? (_jpAllianceId ? '' : 'No alliance detected — “safest” will just avoid hostile sov & low-sec.')
     : 'Failed to load galaxy data (check Settings → Database).';
   _jpPopulateDatalist();
-  _jpUpdateRangeNote(modal);
   _jpRenderBridges(modal);
+  await _jpLoadCharSkills(modal);   // auto-fill JDC/JFC/JF from the selected character
+  _jpUpdateRangeNote(modal);
+}
+
+// Auto-load the selected character's jump skills into the sliders (no-op if no
+// character is selected or it hasn't been synced). Skill type IDs: Jump Drive
+// Calibration 21611, Jump Fuel Conservation 21610, Jump Freighters 29029.
+async function _jpLoadCharSkills(m) {
+  const cid = (typeof selectedCharacterId !== 'undefined' && selectedCharacterId)
+    ? selectedCharacterId : null;
+  if (!cid || !window.eveAPI || !window.eveAPI.getSkillLevels) return;
+  const JDC = 21611, JFC = 21610, JF = 29029;
+  try {
+    const lv = await window.eveAPI.getSkillLevels(cid, [JDC, JFC, JF]);
+    if (!lv) return;
+    const set = (sliderSel, valSel, level) => {
+      if (level == null) return;
+      const sl = m.querySelector(sliderSel), vl = m.querySelector(valSel);
+      if (sl) sl.value = level;
+      if (vl) vl.textContent = level;
+    };
+    set('#jpJdc', '#jpJdcVal', lv[JDC]);
+    set('#jpJfc', '#jpJfcVal', lv[JFC]);
+    set('#jpJf',  '#jpJfVal',  lv[JF]);
+  } catch (_) { /* keep slider defaults */ }
 }
 
 function _jpCloseModal() {
@@ -287,6 +311,10 @@ function _jpBuildModal() {
             <label>Jump Fuel Conservation <span id="jpJfcVal" class="jp-skillval">5</span></label>
             <input id="jpJfc" type="range" min="0" max="5" value="5">
           </div>
+          <div class="jp-field">
+            <label>Jump Freighters <span class="jp-dim" style="font-weight:400;">(JF only)</span> <span id="jpJfVal" class="jp-skillval">5</span></label>
+            <input id="jpJf" type="range" min="0" max="5" value="5">
+          </div>
           <div class="jp-toggles">
             <label class="jp-check"><input type="checkbox" id="jpSafest"> Safest route (prefer your space)</label>
             <label class="jp-check"><input type="checkbox" id="jpAvoidInc"> Avoid incursions</label>
@@ -315,6 +343,7 @@ function _jpBuildModal() {
   m.querySelector('.jp-close').addEventListener('click', _jpCloseModal);
   m.querySelector('#jpJdc').addEventListener('input', e => { m.querySelector('#jpJdcVal').textContent = e.target.value; _jpUpdateRangeNote(m); });
   m.querySelector('#jpJfc').addEventListener('input', e => { m.querySelector('#jpJfcVal').textContent = e.target.value; });
+  m.querySelector('#jpJf').addEventListener('input', e => { m.querySelector('#jpJfVal').textContent = e.target.value; });
   m.querySelector('#jpShip').addEventListener('change', () => _jpUpdateRangeNote(m));
   m.querySelector('#jpMode').addEventListener('change', () => _jpUpdateRangeNote(m));
   m.querySelector('#jpPlotBtn').addEventListener('click', () => _jpPlot(m));
@@ -323,7 +352,7 @@ function _jpBuildModal() {
 }
 
 function _jpShipById(id) { return JP_SHIPS.find(s => s.id === id) || JP_SHIPS[0]; }
-function _jpRangeFor(shipId, jdc) { return _jpShipById(shipId).range * (1 + 0.25 * jdc); }
+function _jpRangeFor(shipId, jdc) { return JumpMath.jumpRange(_jpShipById(shipId).range, jdc); }
 
 function _jpUpdateRangeNote(m) {
   const ship = _jpShipById(m.querySelector('#jpShip').value);
@@ -355,6 +384,7 @@ async function _jpPlot(m) {
   const shipId  = m.querySelector('#jpShip').value;
   const jdc     = +m.querySelector('#jpJdc').value;
   const jfc     = +m.querySelector('#jpJfc').value;
+  const jf      = +m.querySelector('#jpJf').value;
   const rangeLY = _jpRangeFor(shipId, jdc);
 
   if (mode === 'cyno' && (from.sec >= JP_JUMPABLE_MAX_SEC || to.sec >= JP_JUMPABLE_MAX_SEC)) {
@@ -378,7 +408,7 @@ async function _jpPlot(m) {
       result.innerHTML = `<div class="jp-empty jp-err">No route found${mode === 'cyno' ? ' within jump range' : ''}.${mode === 'beacon' ? ' Add bridges or try Cyno mode.' : ''}</div>`;
       return;
     }
-    _jpRenderRoute(result, route, { mode, safest, shipId, jfc });
+    _jpRenderRoute(result, route, { mode, safest, shipId, jfc, jf });
   }, 20);
 }
 
@@ -390,9 +420,9 @@ function _jpSecColor(sec) {
 }
 
 function _jpRenderRoute(container, route, opts) {
-  const { mode, safest, shipId, jfc } = opts;
+  const { mode, safest, shipId, jfc, jf } = opts;
   const ship = _jpShipById(shipId);
-  const fuelMul = (1 - 0.10 * jfc);
+  const isJF = ship.id === 'jf';   // Jump Freighters skill only reduces JF fuel
   let totalLY = 0, totalFuel = 0;
 
   const rows = route.hops.map((hop, i) => {
@@ -403,7 +433,7 @@ function _jpRenderRoute(container, route, opts) {
     let kindCell, fuel = 0;
     if (hop.kind === 'jump') {
       totalLY += hop.ly;
-      fuel = Math.ceil(hop.ly * ship.fuel * fuelMul);
+      fuel = JumpMath.jumpHopFuel(hop.ly, ship.fuel, jfc, jf, isJF);
       totalFuel += fuel;
       kindCell = `${hop.ly.toFixed(2)} LY`;
     } else {
@@ -433,6 +463,7 @@ function _jpRenderRoute(container, route, opts) {
       ${mode === 'cyno' ? `<div><span class="jp-tot-num">${totalLY.toFixed(1)}</span><span class="jp-tot-lbl">LY total</span></div>
                            <div><span class="jp-tot-num">${totalFuel.toLocaleString()}</span><span class="jp-tot-lbl">isotopes</span></div>` : ''}
     </div>
+    <button id="jpShowMapBtn" class="icon-btn" style="width:100%;margin:4px 0 8px;padding:6px;font-size:12px;cursor:pointer;">🗺 Show route on map</button>
     <table class="jp-route-table">
       <thead><tr><th></th><th>System</th><th>Region</th><th class="jp-right">${mode === 'cyno' ? 'Range' : 'Via'}</th><th class="jp-right">Fuel</th><th>Sov</th></tr></thead>
       <tbody>
@@ -446,6 +477,15 @@ function _jpRenderRoute(container, route, opts) {
         ${rows}
       </tbody>
     </table>`;
+
+  // "Show route on map" — close the planner, open the Map page, draw the route.
+  const mapBtn = container.querySelector('#jpShowMapBtn');
+  if (mapBtn) mapBtn.addEventListener('click', () => {
+    _jpCloseModal();
+    if (typeof navigateToPage === 'function') navigateToPage('map');
+    // Give the map page a moment to mount before drawing the route.
+    setTimeout(() => { if (typeof window.mapShowRoute === 'function') window.mapShowRoute(route.path); }, 220);
+  });
 }
 
 // ── Manual bridge list ────────────────────────────────────────────────────────

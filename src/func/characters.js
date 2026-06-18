@@ -168,6 +168,24 @@ async function _performCharacterSync(id) {
   }
 }
 
+// ─── Favorites ────────────────────────────────────────────────────────────────
+// Starred characters are pinned to the top of the list (before the saved drag
+// order). Persisted in localStorage as an array of characterIds.
+const FAV_KEY = 'char_favorites';
+function getFavorites() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(FAV_KEY) || '[]');
+    return new Set((Array.isArray(arr) ? arr : []).map(String));
+  } catch (e) { return new Set(); }
+}
+function toggleFavorite(id) {
+  const favs = getFavorites();
+  id = String(id);
+  if (favs.has(id)) favs.delete(id); else favs.add(id);
+  try { localStorage.setItem(FAV_KEY, JSON.stringify([...favs])); } catch (e) { /* ignore */ }
+  return favs.has(id);
+}
+
 async function loadAccounts() {
   try {
     const accounts = await window.eveAPI.getAccounts();
@@ -185,20 +203,19 @@ async function loadAccounts() {
       return;
     }
 
-    // Respect saved drag order
-    let orderedAccounts = accounts;
+    // Sort: favorites first, then the saved drag order within each group.
+    const favs = getFavorites();
+    const orderMap = {};
     try {
       const savedOrder = JSON.parse(localStorage.getItem('char_card_order') || 'null');
-      if (savedOrder && Array.isArray(savedOrder)) {
-        const orderMap = {};
-        savedOrder.forEach((id, i) => { orderMap[String(id)] = i; });
-        orderedAccounts = [...accounts].sort((a, b) => {
-          const ai = orderMap[String(a.characterId)] ?? 999;
-          const bi = orderMap[String(b.characterId)] ?? 999;
-          return ai - bi;
-        });
-      }
+      if (savedOrder && Array.isArray(savedOrder)) savedOrder.forEach((id, i) => { orderMap[String(id)] = i; });
     } catch (e) { /* ignore */ }
+    const orderedAccounts = [...accounts].sort((a, b) => {
+      const fa = favs.has(String(a.characterId)) ? 0 : 1;
+      const fb = favs.has(String(b.characterId)) ? 0 : 1;
+      if (fa !== fb) return fa - fb;                       // favorites pinned to top
+      return (orderMap[String(a.characterId)] ?? 999) - (orderMap[String(b.characterId)] ?? 999);
+    });
 
     orderedAccounts.forEach(acc => {
       const isActive = String(acc.characterId) === String(selectedCharacterId);
@@ -232,10 +249,27 @@ async function loadAccounts() {
         <div class="character-card-meta">
           <span style="font-family:var(--mono);font-size:10px;color:var(--text-3);">${acc.characterId}</span>
         </div>
+        <div class="character-card-location" style="font-family:var(--mono);font-size:10px;color:var(--text-2);margin-top:2px;"></div>
         ${isActive ? '<div class="character-active-badge">● ACTIVE</div>' : ''}`;
+
+      // Current location from the local DB (no network) — filled per card.
+      window.eveAPI.getCharacterData(acc.characterId).then(d => {
+        const locEl = infoDiv.querySelector('.character-card-location');
+        if (!locEl) return;
+        const sys = d && d.location && d.location.solar_system_name;
+        locEl.textContent = sys ? `⌖ ${sys}` : '';
+      }).catch(() => {});
 
       const rightDiv  = document.createElement('div');
       rightDiv.className = 'character-card-right';
+
+      const isFav = favs.has(String(acc.characterId));
+      const favBtn = document.createElement('button');
+      favBtn.className = 'character-fav-btn';
+      favBtn.dataset.id = acc.characterId;
+      favBtn.textContent = isFav ? '★' : '☆';
+      favBtn.title = isFav ? 'Unfavorite' : 'Favorite — pin to top';
+      favBtn.style.cssText = `background:none;border:none;cursor:pointer;font-size:16px;line-height:1;padding:2px 6px;flex-shrink:0;color:${isFav ? '#e3c14d' : 'var(--text-3)'};`;
 
       const syncBtn = document.createElement('button');
       syncBtn.className = 'character-sync-btn sync-btn bp-view-btn';
@@ -248,6 +282,7 @@ async function loadAccounts() {
       removeBtn.title = 'Remove Account';
       removeBtn.textContent = '✕';
 
+      rightDiv.appendChild(favBtn);
       rightDiv.appendChild(syncBtn);
       rightDiv.appendChild(removeBtn);
       item.appendChild(portrait);
@@ -319,6 +354,16 @@ async function loadAccounts() {
         requestCharacterSync(e.currentTarget.getAttribute('data-id'));
       });
     });
+
+    // Wire favorite stars — toggle persisted state and re-render so the list
+    // re-sorts with favorites pinned to the top.
+    listDiv.querySelectorAll('.character-fav-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleFavorite(e.currentTarget.getAttribute('data-id'));
+        loadAccounts();
+      });
+    });
   } catch (err) {
     console.error('Failed to load accounts:', err);
     showToast('Error loading saved accounts.', 'error');
@@ -337,6 +382,21 @@ function selectCharacter(account) {
   if (selName) selName.textContent = account.characterName;
   const selMeta = document.getElementById('selectedCharMeta');
   if (selMeta) selMeta.textContent = `ID: ${account.characterId}`;
+
+  // Current location (solar system, station if known) — from the last sync.
+  const selLoc = document.getElementById('selectedCharLocation');
+  if (selLoc) {
+    selLoc.textContent = '⌖ Locating…';
+    window.eveAPI.getCharacterData(account.characterId)
+      .then(d => {
+        const sys = d && d.location && d.location.solar_system_name;
+        const st  = d && d.location && d.location.station_name;
+        selLoc.textContent = sys
+          ? `⌖ ${sys}${st ? ' · ' + st : ''}`
+          : '⌖ Location unknown — sync this character';
+      })
+      .catch(() => { selLoc.textContent = ''; });
+  }
 
   document.querySelectorAll('.character-card').forEach(card => {
     const isThis = String(card.dataset.characterId) === String(account.characterId);
@@ -364,6 +424,8 @@ function clearSelectedCharacter() {
   selectedCharacterId = null;
   const section = document.getElementById('selectedCharacterSection');
   if (section) section.style.display = 'none';
+  const selLoc = document.getElementById('selectedCharLocation');
+  if (selLoc) selLoc.textContent = '';
   document.querySelectorAll('.character-card').forEach(card => {
     card.classList.remove('selected');
     const badge    = card.querySelector('.character-active-badge');

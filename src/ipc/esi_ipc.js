@@ -90,62 +90,75 @@ function registerEsiHandlers({
     return getLocator().resolveSystemNames(systemIds);
   });
 
-  // ─── IPC: Jita market prices (Jita 4-4, station 60003760) ────────────────
-  ipcHandle('get-jita-prices', async (_, typeIds) => {
-    const JITA_STATION_ID = 60003760; // Jita IV - Moon 4 (Caldari Navy Assembly Plant)
-    const REGION_FORGE    = 10000002;
-    const prices          = {};
+  // ─── IPC: Hub market prices (best buy/sell at a major trade hub) ──────────
+  // The 4 main trade hubs. ownerCorpId + factionId are the station owner (from
+  // ESI universe/stations) used by the renderer's broker-fee standing math.
+  const TRADE_HUBS = {
+    jita:    { stationId: 60003760, regionId: 10000002, ownerCorpId: 1000035, factionId: 500001 }, // Jita IV-4 · Caldari Navy
+    amarr:   { stationId: 60008494, regionId: 10000043, ownerCorpId: 1000086, factionId: 500003 }, // Amarr VIII (Oris) EFA · Emperor Family
+    dodixie: { stationId: 60011866, regionId: 10000032, ownerCorpId: 1000120, factionId: 500004 }, // Dodixie IX-20 FNAP · Federation Navy
+    rens:    { stationId: 60004588, regionId: 10000030, ownerCorpId: 1000049, factionId: 500002 }, // Rens VI-8 BTT · Brutor Tribe
+    hek:     { stationId: 60005686, regionId: 10000042, ownerCorpId: 1000057, factionId: 500002 }, // Hek VIII-12 BCF · Boundless Creation
+  };
 
-    try {
-      for (const typeId of typeIds) {
-        const cacheKey = `jita_price_${typeId}`;
-        const cached   = readCache(cacheKey);
+  // Best buy/sell per type for one hub, region-orders filtered to the hub station.
+  async function fetchHubPrices(typeIds, hubKey) {
+    const hub    = TRADE_HUBS[hubKey] ? hubKey : 'jita';
+    const cfg    = TRADE_HUBS[hub];
+    const prices = {};
+    if (!Array.isArray(typeIds)) return prices;
 
-        if (cached) {
-          prices[typeId] = cached;
+    for (const typeId of typeIds) {
+      const cacheKey = `hubprice_${hub}_${typeId}`;
+      const cached   = readCache(cacheKey);
+      if (cached) { prices[typeId] = cached; continue; }
+
+      try {
+        let orderData = [];
+        try {
+          orderData = await httpGet(
+            `${ESI_BASE}/v1/markets/${cfg.regionId}/orders/?datasource=tranquility&type_id=${typeId}&order_type=all`
+          );
+        } catch (e) { orderData = []; }
+
+        orderData = Array.isArray(orderData)
+          ? orderData.filter(o => Number(o.location_id) === cfg.stationId)
+          : [];
+
+        if (!orderData.length) {
+          prices[typeId] = { buy: 0, sell: 0 };
+          writeCache(cacheKey, { buy: 0, sell: 0 }, 1); // cache misses for 1 day
           continue;
         }
 
-        try {
-          let orderData = [];
-          try {
-            orderData = await httpGet(
-              `${ESI_BASE}/v1/markets/${REGION_FORGE}/orders/?datasource=tranquility&type_id=${typeId}&order_type=all`
-            );
-          } catch (e) {
-            orderData = [];
-          }
-
-          // Filter for Jita station orders only
-          orderData = Array.isArray(orderData)
-            ? orderData.filter(o => Number(o.location_id) === JITA_STATION_ID)
-            : [];
-
-          if (!orderData || orderData.length === 0) {
-            prices[typeId] = { buy: 0, sell: 0 };
-            writeCache(cacheKey, { buy: 0, sell: 0 }, 1); // cache misses for 1 day
-            continue;
-          }
-
-          const buyOrders  = orderData.filter(o =>  o.is_buy_order);
-          const sellOrders = orderData.filter(o => !o.is_buy_order);
-
-          const bestBuyPrice  = buyOrders.length  > 0 ? Math.max(...buyOrders.map(o => o.price))  : 0;
-          const bestSellPrice = sellOrders.length > 0 ? Math.min(...sellOrders.map(o => o.price)) : 0;
-
-          const priceData    = { buy: bestBuyPrice, sell: bestSellPrice };
-          prices[typeId]     = priceData;
-          writeCache(cacheKey, priceData, 0.25); // cache 6 hours
-        } catch (e) {
-          console.log(`Failed to fetch Jita price for ${typeId}:`, e.message);
-          prices[typeId] = { buy: 0, sell: 0 };
-        }
+        const buyOrders  = orderData.filter(o =>  o.is_buy_order);
+        const sellOrders = orderData.filter(o => !o.is_buy_order);
+        const priceData  = {
+          buy:  buyOrders.length  ? Math.max(...buyOrders.map(o => o.price))  : 0,
+          sell: sellOrders.length ? Math.min(...sellOrders.map(o => o.price)) : 0,
+        };
+        prices[typeId] = priceData;
+        writeCache(cacheKey, priceData, 0.25); // cache 6 hours
+      } catch (e) {
+        console.log(`Failed to fetch ${hub} price for ${typeId}:`, e.message);
+        prices[typeId] = { buy: 0, sell: 0 };
       }
-    } catch (e) {
-      console.error('Market price lookup error:', e);
     }
-
     return prices;
+  }
+
+  // Hub metadata (station/region/owner corp/faction) — single source of truth
+  // for the renderer's broker-fee standing math.
+  ipcHandle('get-hub-meta', async () => TRADE_HUBS);
+
+  // Generalized hub prices: { typeId: { buy, sell } } for the chosen hub.
+  ipcHandle('get-hub-prices', async (_, typeIds, hubKey) => {
+    return fetchHubPrices(typeIds, hubKey || 'jita');
+  });
+
+  // Back-compat alias — existing callers keep getting Jita 4-4.
+  ipcHandle('get-jita-prices', async (_, typeIds) => {
+    return fetchHubPrices(typeIds, 'jita');
   });
 
   // ─── IPC: Blueprint materials — SDE primary, Fuzzwork fallback ──────────────

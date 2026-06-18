@@ -1,12 +1,15 @@
 {
   "name": "eve-carbon",
   "productName": "EVE Carbon",
-  "version": "0.7.5",
+  "version": "0.8.0",
   "author": "Mia Christina Panayides",
   "description": "This is a desktop application built with Electron that calculates the cost of manufacturing items in EVE Online based on their blueprints and market prices.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "lint": "node scripts/lint.js",
+    "test": "node --test",
+    "coverage": "node --test --experimental-test-coverage",
     "fetch-sde": "node scripts/fetch-sde.js",
     "build-win": "npm run fetch-sde && electron-builder --win --x64",
     "build-mac": "electron-builder --mac",
@@ -54,11 +57,12 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.icns"
     },
     "linux": {
       "target": "AppImage",
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.png",
+      "category": "Utility"
     },
     "files": [
       "**/*",
@@ -68,9 +72,8 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
-    "electron": "^28.0.0",
-    "electron-builder": "^26.8.1",
-    "electron-rebuild": "^2.0.3"
+    "electron": "^42.0.0",
+    "electron-builder": "^26.8.1"
   },
   "dependencies": {
     "@xmpp/client": "^0.14.0",
@@ -79,7 +82,7 @@
     "dotenv": "^17.4.2",
     "js-yaml": "^4.1.0",
     "sqlite": "^4.0.25",
-    "sqlite3": "^5.1.6",
+    "sqlite3": "^6.0.1",
     "unbzip2-stream": "^1.4.3"
   }
 }

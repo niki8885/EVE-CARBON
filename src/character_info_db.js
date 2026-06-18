@@ -13,6 +13,36 @@ const { open } = require('sqlite');
 
 let charDb = null;   // shared db handle, opened once
 
+// ── Write serialization ───────────────────────────────────────────────────────
+// Every write transaction shares the single `charDb` connection. Issuing
+// BEGIN/COMMIT from concurrent async callers (e.g. several resolveNames() in
+// flight at startup) collides on one connection with
+//   "cannot start a transaction within a transaction"
+//   "cannot commit - no transaction is active"
+// withTx() serializes transactions through a promise chain so only one is ever
+// open, and guarantees it is always closed (COMMIT on success, ROLLBACK on
+// error) — a failed write can never leave a dangling transaction behind.
+let _txChain = Promise.resolve();
+async function withTx(fn) {
+  const prev = _txChain;
+  let release;
+  _txChain = new Promise((res) => { release = res; });
+  await prev;                       // wait for any in-flight transaction to finish
+  try {
+    await charDb.run('BEGIN');
+    try {
+      const result = await fn();
+      await charDb.run('COMMIT');
+      return result;
+    } catch (e) {
+      try { await charDb.run('ROLLBACK'); } catch (_) { /* nothing to roll back */ }
+      throw e;
+    }
+  } finally {
+    release();                      // let the next queued transaction proceed
+  }
+}
+
 // ── DB init ───────────────────────────────────────────────────────────────────
 async function initCharacterDb(dataDir) {
   if (charDb) return charDb;
@@ -224,6 +254,31 @@ async function ensureCharacterTables(characterId) {
       loyalty_points    INTEGER,
       synced_at         INTEGER
     );
+
+    -- Market-fee skills (ESI /characters/{id}/skills/) — single row (id = 1)
+    CREATE TABLE IF NOT EXISTS ${p}_trade_skills (
+      id               INTEGER PRIMARY KEY CHECK (id = 1),
+      accounting       INTEGER,
+      broker_relations INTEGER,
+      synced_at        INTEGER
+    );
+
+    -- NPC standings (ESI /characters/{id}/standings/) — faction & corp standings
+    -- used to reduce the broker fee at trade hubs.
+    CREATE TABLE IF NOT EXISTS ${p}_standings (
+      from_id    INTEGER PRIMARY KEY,
+      from_type  TEXT,
+      standing   REAL,
+      synced_at  INTEGER
+    );
+
+    -- All trained skills (ESI /characters/{id}/skills/) — e.g. the jump planner
+    -- reads Jump Drive Calibration / Fuel Conservation / Jump Freighters levels.
+    CREATE TABLE IF NOT EXISTS ${p}_skills (
+      skill_id  INTEGER PRIMARY KEY,
+      level     INTEGER,
+      synced_at INTEGER
+    );
   `);
 
   // ── Migrate existing tables: add columns that may be missing ────────────────
@@ -399,8 +454,8 @@ async function replaceAssets(characterId, assets) {
   await db.run(`DROP TABLE IF EXISTS ${tmp}`);
   await db.run(`CREATE TABLE ${tmp} AS SELECT * FROM ${p}_assets WHERE 0`); // same schema, empty
 
-  await db.run('BEGIN');
   try {
+    await withTx(async () => {
     for (const a of assets) {
       await db.run(
         `INSERT OR REPLACE INTO ${tmp}
@@ -425,9 +480,8 @@ async function replaceAssets(characterId, assets) {
     // Atomic swap: drop live table, rename temp into its place
     await db.run(`DROP TABLE ${p}_assets`);
     await db.run(`ALTER TABLE ${tmp} RENAME TO ${p}_assets`);
-    await db.run('COMMIT');
+    });
   } catch (e) {
-    await db.run('ROLLBACK').catch(() => {});
     // Clean up temp table; the original live table is untouched
     await db.run(`DROP TABLE IF EXISTS ${tmp}`).catch(() => {});
     throw e;
@@ -508,8 +562,8 @@ async function replaceBlueprints(characterId, blueprints) {
   const db  = charDb;
   const now = Date.now();
   const p   = `char_${characterId}`;
+  await withTx(async () => {
   await db.run(`DELETE FROM ${p}_blueprints`);
-  await db.run('BEGIN');
   for (const bp of blueprints) {
     await db.run(
       `INSERT OR REPLACE INTO ${p}_blueprints
@@ -524,7 +578,7 @@ async function replaceBlueprints(characterId, blueprints) {
       ]
     );
   }
-  await db.run('COMMIT');
+  });
 }
 
 // ── Read helpers (for IPC get handlers) ──────────────────────────────────────
@@ -795,8 +849,8 @@ async function replaceWalletJournal(characterId, entries) {
   const db  = charDb;
   const now = Date.now();
   const p   = `char_${characterId}`;
+  await withTx(async () => {
   await db.run(`DELETE FROM ${p}_wallet_journal`);
-  await db.run('BEGIN');
   for (const e of entries) {
     await db.run(
       `INSERT OR REPLACE INTO ${p}_wallet_journal
@@ -821,7 +875,7 @@ async function replaceWalletJournal(characterId, entries) {
       ]
     );
   }
-  await db.run('COMMIT');
+  });
 }
 
 async function getWalletJournal(characterId) {
@@ -838,8 +892,8 @@ async function replaceWalletTransactions(characterId, transactions) {
   const db  = charDb;
   const now = Date.now();
   const p   = `char_${characterId}`;
+  await withTx(async () => {
   await db.run(`DELETE FROM ${p}_wallet_transactions`);
-  await db.run('BEGIN');
   for (const t of transactions) {
     await db.run(
       `INSERT OR REPLACE INTO ${p}_wallet_transactions
@@ -863,7 +917,7 @@ async function replaceWalletTransactions(characterId, transactions) {
       ]
     );
   }
-  await db.run('COMMIT');
+  });
 }
 
 async function getWalletTransactions(characterId) {
@@ -880,8 +934,8 @@ async function replaceLoyaltyPoints(characterId, lpRows) {
   const db  = charDb;
   const now = Date.now();
   const p   = `char_${characterId}`;
+  await withTx(async () => {
   await db.run(`DELETE FROM ${p}_loyalty_points`);
-  await db.run('BEGIN');
   for (const row of lpRows) {
     await db.run(
       `INSERT OR REPLACE INTO ${p}_loyalty_points
@@ -895,7 +949,7 @@ async function replaceLoyaltyPoints(characterId, lpRows) {
       ]
     );
   }
-  await db.run('COMMIT');
+  });
 }
 
 async function getLoyaltyPoints(characterId) {
@@ -960,9 +1014,108 @@ async function getCharacterPIColonies(characterId) {
   }
 }
 
+// ── Trade profile: market-fee skills + NPC standings ────────────────────────
+// Used by the Ore/Ice/Gas calculators to compute sales tax (Accounting) and
+// broker fee (Broker Relations + faction/corp standing at the chosen hub).
+async function replaceTradeProfile(characterId, profile) {
+  if (!charDb || !profile) return;
+  const p   = `char_${characterId}`;
+  const now = Date.now();
+  await charDb.run(
+    `INSERT INTO ${p}_trade_skills (id, accounting, broker_relations, synced_at)
+     VALUES (1, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       accounting       = excluded.accounting,
+       broker_relations = excluded.broker_relations,
+       synced_at        = excluded.synced_at`,
+    [Number(profile.accounting) || 0, Number(profile.brokerRelations) || 0, now]
+  );
+}
+
+async function getTradeProfile(characterId) {
+  if (!charDb) return null;
+  try {
+    const row = await charDb.get(
+      `SELECT accounting, broker_relations FROM char_${characterId}_trade_skills WHERE id = 1`
+    );
+    if (!row) return null;
+    return { accounting: row.accounting || 0, brokerRelations: row.broker_relations || 0 };
+  } catch { return null; }
+}
+
+async function replaceStandings(characterId, rows) {
+  if (!charDb) return;
+  const p   = `char_${characterId}`;
+  const now = Date.now();
+  await withTx(async () => {
+    await charDb.run(`DELETE FROM ${p}_standings`);
+    for (const r of (rows || [])) {
+      if (!r || r.from_id == null) continue;
+      await charDb.run(
+        `INSERT OR REPLACE INTO ${p}_standings (from_id, from_type, standing, synced_at)
+         VALUES (?,?,?,?)`,
+        [Number(r.from_id), r.from_type || null, Number(r.standing) || 0, now]
+      );
+    }
+  });
+}
+
+// Store the full trained-skills list (active levels) for a character.
+async function replaceSkills(characterId, skills) {
+  if (!charDb) return;
+  const p   = `char_${characterId}`;
+  const now = Date.now();
+  await withTx(async () => {
+    await charDb.run(`DELETE FROM ${p}_skills`);
+    for (const s of (skills || [])) {
+      if (!s || s.skill_id == null) continue;
+      await charDb.run(
+        `INSERT OR REPLACE INTO ${p}_skills (skill_id, level, synced_at) VALUES (?,?,?)`,
+        [Number(s.skill_id), Number(s.active_skill_level != null ? s.active_skill_level : (s.level || 0)), now]
+      );
+    }
+  });
+}
+
+// Returns { skillTypeId: level } for the requested skill ids (or all if omitted).
+async function getSkillLevels(characterId, typeIds) {
+  if (!charDb) return {};
+  try {
+    let rows;
+    if (Array.isArray(typeIds) && typeIds.length) {
+      const ph = typeIds.map(() => '?').join(',');
+      rows = await charDb.all(`SELECT skill_id, level FROM char_${characterId}_skills WHERE skill_id IN (${ph})`, typeIds);
+    } else {
+      rows = await charDb.all(`SELECT skill_id, level FROM char_${characterId}_skills`);
+    }
+    const out = {};
+    for (const r of rows) out[r.skill_id] = r.level;
+    return out;
+  } catch { return {}; }
+}
+
+// Returns { fromId: standing } for fast lookup by the renderer.
+async function getStandings(characterId) {
+  if (!charDb) return {};
+  try {
+    const rows = await charDb.all(
+      `SELECT from_id, standing FROM char_${characterId}_standings`
+    );
+    const out = {};
+    for (const r of rows) out[r.from_id] = r.standing;
+    return out;
+  } catch { return {}; }
+}
+
 module.exports = {
   initCharacterDb,
   ensureCharacterTables,
+  replaceTradeProfile,
+  getTradeProfile,
+  replaceStandings,
+  getStandings,
+  replaceSkills,
+  getSkillLevels,
   upsertCharacterInfo,
   insertWalletSnapshot,
   upsertLocation,
@@ -1064,8 +1217,7 @@ async function getStationsLastSync(key) {
 async function upsertNpcStations(rows) {
   if (!charDb || !rows.length) return;
   const now = Date.now();
-  await charDb.run('BEGIN');
-  try {
+  await withTx(async () => {
     for (const r of rows) {
       await charDb.run(
         `INSERT INTO npc_stations
@@ -1091,20 +1243,15 @@ async function upsertNpcStations(rows) {
       `INSERT INTO station_sync_meta (key, synced_at) VALUES ('npc_stations', ?)
        ON CONFLICT(key) DO UPDATE SET synced_at = excluded.synced_at`, now
     );
-    await charDb.run('COMMIT');
-    console.log(`[CharDB] Upserted ${rows.length} NPC stations.`);
-  } catch (e) {
-    await charDb.run('ROLLBACK');
-    throw e;
-  }
+  });
+  console.log(`[CharDB] Upserted ${rows.length} NPC stations.`);
 }
 
 // Bulk-upsert Upwell structures.
 async function upsertUpwellStructures(rows) {
   if (!charDb || !rows.length) return;
   const now = Date.now();
-  await charDb.run('BEGIN');
-  try {
+  await withTx(async () => {
     for (const r of rows) {
       await charDb.run(
         `INSERT INTO upwell_structures
@@ -1132,12 +1279,8 @@ async function upsertUpwellStructures(rows) {
       `INSERT INTO station_sync_meta (key, synced_at) VALUES ('upwell_structures', ?)
        ON CONFLICT(key) DO UPDATE SET synced_at = excluded.synced_at`, now
     );
-    await charDb.run('COMMIT');
-    console.log(`[CharDB] Upserted ${rows.length} Upwell structures.`);
-  } catch (e) {
-    await charDb.run('ROLLBACK');
-    throw e;
-  }
+  });
+  console.log(`[CharDB] Upserted ${rows.length} Upwell structures.`);
 }
 
 // Look up a single station/structure by ID from either table.
@@ -1234,7 +1377,7 @@ async function putCachedNames(entries) {
   if (!charDb || !entries || !entries.length) return;
   const now = Date.now();
   try {
-    await charDb.run('BEGIN');
+    await withTx(async () => {
     for (const e of entries) {
       if (!e || !e.id || !e.name) continue;
       await charDb.run(
@@ -1247,9 +1390,8 @@ async function putCachedNames(entries) {
         [Number(e.id), String(e.name), e.category || null, now]
       );
     }
-    await charDb.run('COMMIT');
+    });
   } catch (err) {
-    try { await charDb.run('ROLLBACK'); } catch (_) {}
     console.warn('[CharDB] putCachedNames failed:', err.message);
   }
 }

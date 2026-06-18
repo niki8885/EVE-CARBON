@@ -4,7 +4,7 @@ const { app } = require('electron');
 const envPath = app.isPackaged
   ? path.join(process.resourcesPath, '.env')
   : path.join(__dirname, '.env');
-require('dotenv').config({ path: envPath });
+require('dotenv').config({ path: envPath, quiet: true }); // quiet: suppress dotenv's startup tip line
 
 // ── Now safe to require everything else ────────────────────────────────────────
 const { BrowserWindow, ipcMain, shell, screen } = require('electron');
@@ -87,6 +87,18 @@ const SSO_AUTH_URL   = 'https://login.eveonline.com/v2/oauth/authorize/';
 const SSO_TOKEN_URL  = 'https://login.eveonline.com/v2/oauth/token';
 const SSO_VERIFY_URL = 'https://login.eveonline.com/oauth/verify';
 const ESI_BASE       = 'https://esi.evetech.net';
+// Terminal logs are UTF-8; a Windows console in a non-UTF-8 code page renders
+// glyphs like — ✓ ✗ … as mojibake (тАФ / тЬУ …). Strip to ASCII for stdout logs
+// only — the in-app HTML console (renderer process) keeps the real glyphs.
+const _ascii = (s) => String(s)
+  .replace(/—/g, '-').replace(/…/g, '...')
+  .replace(/✓/g, '[ok]').replace(/✗/g, '[x]').replace(/→/g, '->');
+// Wrap console.* once so every main-process log is ASCII-safe regardless of the
+// terminal's code page. Covers all modules (shared console) and future logs.
+for (const _m of ['log', 'warn', 'error', 'info']) {
+  const _orig = console[_m].bind(console);
+  console[_m] = (...args) => _orig(...args.map(a => (typeof a === 'string' ? _ascii(a) : a)));
+}
 const FUZZWORK_BASE  = 'https://www.fuzzwork.co.uk';
 const CALLBACK_PORT  = 12500;
 // Must match EXACTLY what is registered in the EVE developer portal
@@ -109,6 +121,7 @@ const SCOPES         = [
   'esi-location.read_ship_type.v1',             // current ship type
   'esi-planets.manage_planets.v1',              // planetary interaction colonies
   'esi-characters.read_loyalty.v1',             // loyalty points per corporation
+  'esi-characters.read_standings.v1',           // NPC faction/corp standings (broker-fee reduction in trade calc)
   'esi-skills.read_skills.v1',                  // total skill points 
   'esi-skills.read_skillqueue.v1',              // current skill queue (for estimating free time until next SP gain) 
   'esi-fleets.read_fleet.v1',                    // for fleet role tags in Jabber messages (e.g. FC, squad commander, etc.)
@@ -317,6 +330,63 @@ ipcMain.handle('open-external-url', (_, url) => {
   if (url && /^https?:\/\//i.test(url)) shell.openExternal(url);
 });
 ipcMain.handle('get-app-version', () => app.getVersion());
+
+// Trade-fee profile for the Ore/Ice/Gas calculators: Accounting + Broker
+// Relations skill levels and NPC standings (keyed by from_id). Returns nulls if
+// the character hasn't been synced yet so the renderer can fall back to defaults.
+ipcMain.handle('get-trade-profile', async (_, characterId) => {
+  if (!characterId) return null;
+  try {
+    const profile   = await charInfoDb.getTradeProfile(characterId);
+    const standings = await charInfoDb.getStandings(characterId);
+    return {
+      accounting:      profile ? profile.accounting      : null,
+      brokerRelations: profile ? profile.brokerRelations : null,
+      standings:       standings || {},
+    };
+  } catch (e) {
+    return { accounting: null, brokerRelations: null, standings: {} };
+  }
+});
+
+// Skill levels for a character (e.g. the jump planner reads JDC/JFC/Jump
+// Freighters). Returns { skillTypeId: level }; empty if the character isn't synced.
+ipcMain.handle('get-skill-levels', async (_, characterId, typeIds) => {
+  if (!characterId) return {};
+  try { return await charInfoDb.getSkillLevels(characterId, typeIds); }
+  catch (e) { return {}; }
+});
+
+// Moon ore reprocessing outputs from the local SDE (invTypeMaterials). Returns
+// { [oreTypeId]: { name, volume, portionSize, outputs:[{id,name,quantity}] } }.
+// Empty {} when the SDE isn't downloaded — the Moon Calculator falls back to its
+// hardcoded primary-moon-material estimate.
+ipcMain.handle('get-moon-reprocessing', async (_, typeIds) => {
+  const out = {};
+  if (!sdeDb || !Array.isArray(typeIds) || !typeIds.length) return out;
+  try {
+    const ph = typeIds.map(() => '?').join(',');
+    const types = await sdeDb.all(
+      `SELECT typeID, typeName, volume, portionSize FROM invTypes WHERE typeID IN (${ph})`, typeIds
+    );
+    for (const t of types) {
+      out[t.typeID] = { name: t.typeName, volume: t.volume, portionSize: t.portionSize || 100, outputs: [] };
+    }
+    const mats = await sdeDb.all(
+      `SELECT m.typeID AS oreId, m.materialTypeID AS matId, m.quantity AS qty, mt.typeName AS matName
+         FROM invTypeMaterials m
+         JOIN invTypes mt ON mt.typeID = m.materialTypeID
+        WHERE m.typeID IN (${ph})`, typeIds
+    );
+    for (const m of mats) {
+      if (out[m.oreId]) out[m.oreId].outputs.push({ id: m.matId, name: m.matName, quantity: m.qty });
+    }
+  } catch (e) {
+    console.log('[moon] reprocessing query failed:', e.message);
+    return {};
+  }
+  return out;
+});
 
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return;   // second instance is quitting — don't init/open
@@ -596,7 +666,6 @@ app.whenReady().then(async () => {
 
   // ── Salvage Calculator — all rig blueprints with their salvage material requirements ──
   ipcHandle('salvage-get-rig-data', async () => {
-    const sdeDb = getSdeDb();
     if (!sdeDb) return null;
     try {
       const rows = await sdeDb.all(`
@@ -1578,7 +1647,35 @@ async function coreCharacterSync(characterId, characterName, progressCb) {
     summary.steps.wallet_journal = `error: ${e.message}`;
     report('wallet_journal', `✗ ${e.message}`);
   }
- 
+
+  // 9. Market-fee profile — trade skills + NPC standings (for Ore/Ice/Gas calc)
+  try {
+    report('trade_profile', 'Fetching trade skills…');
+    const ACCOUNTING_ID = 16622, BROKER_RELATIONS_ID = 3446;
+    const skillsData = await httpGet(`${ESI_BASE}/v4/characters/${characterId}/skills/?datasource=tranquility`, authHdr);
+    const skills = Array.isArray(skillsData?.skills) ? skillsData.skills : [];
+    await charInfoDb.replaceSkills(characterId, skills);   // full list — used by jump planner etc.
+    const lvl = (id) => (skills.find(s => s.skill_id === id)?.active_skill_level) || 0;
+    const acct = lvl(ACCOUNTING_ID), broker = lvl(BROKER_RELATIONS_ID);
+    await charInfoDb.replaceTradeProfile(characterId, { accounting: acct, brokerRelations: broker });
+    summary.steps.trade_skills = `acct ${acct} / broker ${broker}`;
+    report('trade_profile', `✓ Accounting ${acct}, Broker Relations ${broker}`);
+  } catch (e) { summary.steps.trade_skills = `error: ${e.message}`; report('trade_profile', `✗ skills: ${e.message}`); }
+
+  try {
+    report('trade_profile', 'Fetching standings…');
+    const standings = await httpGet(`${ESI_BASE}/v1/characters/${characterId}/standings/?datasource=tranquility`, authHdr);
+    if (Array.isArray(standings)) {
+      await charInfoDb.replaceStandings(characterId, standings);
+      summary.steps.standings = `${standings.length} entries`;
+      report('trade_profile', `✓ ${standings.length} standings`);
+    }
+  } catch (e) {
+    // Pre-re-auth tokens lack esi-characters.read_standings.v1 → 403; degrade gracefully.
+    summary.steps.standings = `error: ${e.message}`;
+    report('trade_profile', `✗ standings: ${e.message} (re-login to grant read_standings)`);
+  }
+
   return summary;
 }
 

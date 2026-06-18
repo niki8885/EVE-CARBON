@@ -1,0 +1,103 @@
+name: 🐞 Bug report
+description: Report something that is broken or behaving unexpectedly in EVE Carbon.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please fill in as much as you can —
+        it makes fixing the issue far faster. For crashes, the DevTools console log
+        (open with **Ctrl+Shift+I** / **Cmd+Opt+I**) is especially helpful.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I searched existing issues and this has not been reported yet.
+          required: true
+        - label: I am running the latest release of EVE Carbon.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: EVE Carbon version
+      description: Shown in the app window title / installer (e.g. 0.7.5).
+      placeholder: "0.7.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which part of the app does this happen in?
+      options:
+        - Blueprints / material calculator
+        - Assets & wealth tracking
+        - Wallets
+        - Markets
+        - Planetary Interaction
+        - Map / jump planner
+        - Jabber (XMPP)
+        - Characters / EVE SSO login
+        - Cost index / industry
+        - Theming / UI
+        - SDE database / data sync
+        - Install / update / build
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps that reliably trigger the bug.
+      placeholder: |
+        1. Open the Blueprints tab
+        2. Search for "Raven"
+        3. Click "Calculate"
+        4. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console / error logs
+      description: Output from DevTools (Ctrl+Shift+I → Console). This is rendered as code, no backticks needed.
+      render: shell
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Screenshots, theme in use, whether it started after an update, etc.

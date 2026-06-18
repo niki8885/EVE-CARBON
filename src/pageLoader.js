@@ -41,6 +41,8 @@ const PAGE_HTML = {
               </div>
               <div id="selectedCharMeta"
                    style="font-size:10px; color:var(--text-3); font-family:var(--mono);"></div>
+              <div id="selectedCharLocation"
+                   style="font-size:11px; color:var(--text-2); font-family:var(--mono); margin-top:4px;"></div>
             </div>
             <button class="char-action-btn" onclick="clearSelectedCharacter()" title="Clear selection">✕</button>
           </div>
@@ -151,6 +153,9 @@ const PAGE_HTML = {
           </button>
           <button class="industry-sub-btn" data-industry-tab="gas">
             <span class="industry-sub-icon">⬡</span>Gas Calculator
+          </button>
+          <button class="industry-sub-btn" data-industry-tab="moon-calc">
+            <span class="industry-sub-icon">⬡</span>Moon Calculator
           </button>
           <button class="industry-sub-btn" data-industry-tab="moon">
             <span class="industry-sub-icon">◎</span>Moon Scanning
