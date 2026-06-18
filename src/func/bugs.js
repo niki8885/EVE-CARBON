@@ -7,7 +7,7 @@
 
   // owner/repo used to auto-open a pre-filled GitHub issue on submit, in addition
   // to the mailto: email. Change this if you fork the project.
-  const GITHUB_REPO = 'niki8885/EVE-CARBON';
+  const GITHUB_REPO = 'mcpanayides/EVE-CARBON';
 
   // ─── Modal HTML ─────────────────────────────────────────────────────────────
   const BUG_MODAL_HTML = `
