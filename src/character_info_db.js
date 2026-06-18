@@ -271,6 +271,14 @@ async function ensureCharacterTables(characterId) {
       standing   REAL,
       synced_at  INTEGER
     );
+
+    -- All trained skills (ESI /characters/{id}/skills/) — e.g. the jump planner
+    -- reads Jump Drive Calibration / Fuel Conservation / Jump Freighters levels.
+    CREATE TABLE IF NOT EXISTS ${p}_skills (
+      skill_id  INTEGER PRIMARY KEY,
+      level     INTEGER,
+      synced_at INTEGER
+    );
   `);
 
   // ── Migrate existing tables: add columns that may be missing ────────────────
@@ -936,6 +944,40 @@ async function replaceStandings(characterId, rows) {
   });
 }
 
+// Store the full trained-skills list (active levels) for a character.
+async function replaceSkills(characterId, skills) {
+  if (!charDb) return;
+  const p   = `char_${characterId}`;
+  const now = Date.now();
+  await withTx(async () => {
+    await charDb.run(`DELETE FROM ${p}_skills`);
+    for (const s of (skills || [])) {
+      if (!s || s.skill_id == null) continue;
+      await charDb.run(
+        `INSERT OR REPLACE INTO ${p}_skills (skill_id, level, synced_at) VALUES (?,?,?)`,
+        [Number(s.skill_id), Number(s.active_skill_level != null ? s.active_skill_level : (s.level || 0)), now]
+      );
+    }
+  });
+}
+
+// Returns { skillTypeId: level } for the requested skill ids (or all if omitted).
+async function getSkillLevels(characterId, typeIds) {
+  if (!charDb) return {};
+  try {
+    let rows;
+    if (Array.isArray(typeIds) && typeIds.length) {
+      const ph = typeIds.map(() => '?').join(',');
+      rows = await charDb.all(`SELECT skill_id, level FROM char_${characterId}_skills WHERE skill_id IN (${ph})`, typeIds);
+    } else {
+      rows = await charDb.all(`SELECT skill_id, level FROM char_${characterId}_skills`);
+    }
+    const out = {};
+    for (const r of rows) out[r.skill_id] = r.level;
+    return out;
+  } catch { return {}; }
+}
+
 // Returns { fromId: standing } for fast lookup by the renderer.
 async function getStandings(characterId) {
   if (!charDb) return {};
@@ -956,6 +998,8 @@ module.exports = {
   getTradeProfile,
   replaceStandings,
   getStandings,
+  replaceSkills,
+  getSkillLevels,
   upsertCharacterInfo,
   insertWalletSnapshot,
   upsertLocation,

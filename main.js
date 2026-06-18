@@ -337,6 +337,14 @@ ipcMain.handle('get-trade-profile', async (_, characterId) => {
   }
 });
 
+// Skill levels for a character (e.g. the jump planner reads JDC/JFC/Jump
+// Freighters). Returns { skillTypeId: level }; empty if the character isn't synced.
+ipcMain.handle('get-skill-levels', async (_, characterId, typeIds) => {
+  if (!characterId) return {};
+  try { return await charInfoDb.getSkillLevels(characterId, typeIds); }
+  catch (e) { return {}; }
+});
+
 // Moon ore reprocessing outputs from the local SDE (invTypeMaterials). Returns
 // { [oreTypeId]: { name, volume, portionSize, outputs:[{id,name,quantity}] } }.
 // Empty {} when the SDE isn't downloaded — the Moon Calculator falls back to its
@@ -1634,6 +1642,7 @@ async function coreCharacterSync(characterId, characterName, progressCb) {
     const ACCOUNTING_ID = 16622, BROKER_RELATIONS_ID = 3446;
     const skillsData = await httpGet(`${ESI_BASE}/v4/characters/${characterId}/skills/?datasource=tranquility`, authHdr);
     const skills = Array.isArray(skillsData?.skills) ? skillsData.skills : [];
+    await charInfoDb.replaceSkills(characterId, skills);   // full list — used by jump planner etc.
     const lvl = (id) => (skills.find(s => s.skill_id === id)?.active_skill_level) || 0;
     const acct = lvl(ACCOUNTING_ID), broker = lvl(BROKER_RELATIONS_ID);
     await charInfoDb.replaceTradeProfile(characterId, { accounting: acct, brokerRelations: broker });
