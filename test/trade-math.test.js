@@ -58,3 +58,30 @@ test('end-to-end: sell vs buy proceeds differ by exactly the broker fee', () => 
   const buyNet  = TM.pickPrice(price, 'buy')  * TM.netFactor('buy',  st, bf);
   approx(buyNet - sellNet, 100 * bf);     // buy keeps the broker fee the seller would pay
 });
+
+test('salesTax / brokerFee: missing args fall back to defaults', () => {
+  approx(TM.salesTax(), 0.08);                          // no accounting → base
+  approx(TM.salesTax(undefined, undefined), 0.08);
+  approx(TM.brokerFee(), 0.03);                         // all undefined → base
+  approx(TM.brokerFee(0, undefined, undefined), 0.03);
+});
+
+test('brokerFee: negative standings raise the fee', () => {
+  approx(TM.brokerFee(0, -10, -10), 0.03 + 0.0003 * 10 + 0.0002 * 10);
+});
+
+test('netFactor: missing fee args and default method', () => {
+  approx(TM.netFactor('sell', undefined, undefined), 1);
+  approx(TM.netFactor('buy', 0.05), 0.95);             // broker omitted; buy ignores it anyway
+});
+
+test('pickPrice: ignores zero/negative orders and unknown methods', () => {
+  assert.equal(TM.pickPrice({ buy: -5, sell: -5 }, 'sell'), 0);
+  assert.equal(TM.pickPrice({ buy: 0, sell: 0 }, 'split'), 0);
+  assert.equal(TM.pickPrice({ buy: 100, sell: 120 }, 'whatever'), 120); // falls back to sell
+});
+
+test('reprocessUnitValue: netFactor defaults to 1, missing qty → 0', () => {
+  approx(TM.reprocessUnitValue(100, 10, 1, 100), 10);          // netFactor omitted → 1
+  approx(TM.reprocessUnitValue(undefined, 10, 1, 100, 1), 0);  // no qty
+});

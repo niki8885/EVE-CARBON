@@ -14,40 +14,65 @@ concurrency:
 permissions:
   contents: read
 
+# Stages run in strict order via `needs`: lint → test → coverage → build.
+# A later stage only starts once the earlier one is green.
 jobs:
-  # ── Fast feedback: syntax check + dependency audit ──────────────────────────
+  # ── Stage 1: lint (syntax) + dependency audit ───────────────────────────────
   lint:
-    name: Lint, test & audit
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
-      # No native rebuild needed for a syntax check → skip scripts (much faster).
       - name: Install dependencies
         run: npm ci --ignore-scripts
-
       - name: Syntax / lint check
         run: npm run lint
-
-      - name: Unit tests
-        run: node --test
-
       # Reports known vulnerabilities. Non-blocking: a new upstream advisory
-      # shouldn't turn every PR red. Drop `continue-on-error` to make it a hard
-      # gate, or tighten with `--audit-level=critical`.
+      # shouldn't turn every PR red. Drop continue-on-error to make it a gate.
       - name: Security audit
         run: npm audit --audit-level=high
         continue-on-error: true
 
-  # ── Confirm the app packages on every platform ──────────────────────────────
+  # ── Stage 2: unit tests (only if lint passed) ───────────────────────────────
+  test:
+    name: Unit tests
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Run tests
+        run: npm test
+
+  # ── Stage 3: coverage tracking (only if tests passed) ───────────────────────
+  coverage:
+    name: Coverage
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Coverage report
+        run: npm run coverage
+
+  # ── Stage 4: build matrix (only if coverage passed) ─────────────────────────
   build:
     name: Build (${{ matrix.os }})
-    needs: lint
+    needs: coverage
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -64,16 +89,13 @@ jobs:
             artifact: dist/*.AppImage
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
       # Full install: postinstall rebuilds the native sqlite3 module for Electron.
       - name: Install dependencies
         run: npm ci
-
       # The build bundles .env and data/ via extraResources (package.json "build").
       # Both are gitignored, so CI provides stubs — we only verify packaging works,
       # not that the real SDE is present (releases run `npm run build-*` for that).
@@ -83,11 +105,9 @@ jobs:
           cp .env.example .env
           mkdir -p data
           : > data/sde.sql
-
       - name: Build
         shell: bash
         run: npx --no-install electron-builder ${{ matrix.target }} --publish never
-
       - name: Verify artifact exists
         shell: bash
         run: |

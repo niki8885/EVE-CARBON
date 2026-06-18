@@ -1,14 +1,15 @@
 {
   "name": "eve-carbon",
   "productName": "EVE Carbon",
-  "version": "0.7.6",
+  "version": "0.8.0",
   "author": "Mia Christina Panayides",
   "description": "This is a desktop application built with Electron that calculates the cost of manufacturing items in EVE Online based on their blueprints and market prices.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "lint": "node scripts/lint.js",
-    "test": "node scripts/lint.js && node --test",
+    "test": "node --test",
+    "coverage": "node --test --experimental-test-coverage",
     "fetch-sde": "node scripts/fetch-sde.js",
     "build-win": "npm run fetch-sde && electron-builder --win --x64",
     "build-mac": "electron-builder --mac",

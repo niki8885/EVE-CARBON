@@ -31,3 +31,21 @@ test('jumpHopFuel: distance × per-LY, rounded up', () => {
   assert.equal(JM.jumpHopFuel(5, 3000, 5, 0, false), 7500);     // carrier 5 ly
   assert.equal(JM.jumpHopFuel(0, 10000, 5, 5, true), 0);
 });
+
+test('jumpRange: missing args default to 0', () => {
+  approx(JM.jumpRange(), 0);
+  approx(JM.jumpRange(5), 5);              // jdc undefined → 0
+  approx(JM.jumpRange(undefined, 5), 0);   // base undefined → 0
+});
+
+test('jumpFuelPerLy: missing args; non-JF ignores the JF skill', () => {
+  approx(JM.jumpFuelPerLy(10000), 10000);                       // no skills → base
+  approx(JM.jumpFuelPerLy(10000, undefined, undefined, true), 10000);
+  approx(JM.jumpFuelPerLy(3000, 5, 5, false), 1500);            // jf skill ignored for non-JF
+  approx(JM.jumpFuelPerLy(), 0);                                // no base
+});
+
+test('jumpHopFuel: missing distance/base → 0', () => {
+  assert.equal(JM.jumpHopFuel(undefined, 10000, 5, 5, true), 0);
+  assert.equal(JM.jumpHopFuel(10, undefined, 5, 5, true), 0);
+});
