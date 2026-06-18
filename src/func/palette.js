@@ -274,6 +274,48 @@ function applyThemeCss(themeData) {
 
   // Persist so next page open can apply instantly before first paint (no flash)
   try { localStorage.setItem('eve-carbon-theme-vars', el.textContent); } catch {}
+
+  // Re-apply the user's UI transparency on top of the freshly-applied theme.
+  applyUiTransparency();
+}
+
+// ── Global UI transparency ────────────────────────────────────────────────────
+// Themes bake an alpha into their surface colours (and some, like Sirius, are
+// fully opaque). This lets the user set one transparency level that's applied to
+// every panel/surface on top of any theme — so the background image shows
+// through. Implemented as an inline override on :root (wins over the theme's
+// <style> block); cleared + re-derived each time so a theme switch reads the
+// new theme's true colours.
+const UI_SURFACE_VARS = ['--bg-panel','--bg-card','--bg-card-deep','--bg-deep','--bg-input','--bg-modal','--bg-surface'];
+
+function _parseRgb(str) {
+  if (!str) return null;
+  str = str.trim();
+  let m = str.match(/^#([0-9a-f]{3})$/i);
+  if (m) { const h = m[1]; return { r: parseInt(h[0]+h[0],16), g: parseInt(h[1]+h[1],16), b: parseInt(h[2]+h[2],16) }; }
+  m = str.match(/^#([0-9a-f]{6})$/i);
+  if (m) { const h = m[1]; return { r: parseInt(h.slice(0,2),16), g: parseInt(h.slice(2,4),16), b: parseInt(h.slice(4,6),16) }; }
+  m = str.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i);
+  if (m) return { r: Math.round(+m[1]), g: Math.round(+m[2]), b: Math.round(+m[3]) };
+  return null;
+}
+
+function getUiTransparency() {            // percent see-through, 0–60
+  const v = parseFloat(localStorage.getItem('eve-ui-transparency'));
+  return isNaN(v) ? 30 : Math.max(0, Math.min(60, v));
+}
+
+function applyUiTransparency() {
+  const root = document.documentElement;
+  // Clear prior inline overrides so getComputedStyle reads the active theme's
+  // real surface colours (not a previously-applied alpha).
+  UI_SURFACE_VARS.forEach(v => root.style.removeProperty(v));
+  const alpha = +(1 - getUiTransparency() / 100).toFixed(3);
+  const cs = getComputedStyle(root);
+  UI_SURFACE_VARS.forEach(v => {
+    const rgb = _parseRgb(cs.getPropertyValue(v));
+    if (rgb) root.style.setProperty(v, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`);
+  });
 }
 
 // ── Apply saved theme at startup ──────────────────────────────────────────────
@@ -282,12 +324,16 @@ async function initTheme() {
   try {
     const cfg     = await window.eveAPI.getAppConfig();
     const themeId = cfg?.app?.theme || 'Carbon';
-    if (themeId === 'Carbon') return; // Carbon === base.css defaults, no injection needed
-    const theme = await window.eveAPI.themeGet(themeId);
-    if (theme) applyThemeCss(theme);
+    // Carbon === base.css defaults, so no var injection needed — but we still
+    // apply the transparency override below for every theme.
+    if (themeId !== 'Carbon') {
+      const theme = await window.eveAPI.themeGet(themeId);
+      if (theme) applyThemeCss(theme);   // calls applyUiTransparency() internally
+    }
   } catch (e) {
     console.warn('[palette] initTheme failed:', e.message);
   }
+  applyUiTransparency();
 }
 
 // ── Palette settings tab ──────────────────────────────────────────────────────
@@ -532,6 +578,19 @@ function bindPaletteEvents() {
   const select = document.getElementById('themeSelect');
   if (select) {
     select.addEventListener('change', () => loadTheme(select.value));
+  }
+
+  // UI transparency slider — live global control over panel see-through.
+  const tSlider = document.getElementById('uiTransparencySlider');
+  const tVal    = document.getElementById('uiTransparencyVal');
+  if (tSlider) {
+    tSlider.value = getUiTransparency();
+    if (tVal) tVal.textContent = `${tSlider.value}%`;
+    tSlider.addEventListener('input', () => {
+      if (tVal) tVal.textContent = `${tSlider.value}%`;
+      try { localStorage.setItem('eve-ui-transparency', String(tSlider.value)); } catch {}
+      applyUiTransparency();
+    });
   }
 
   // Apply theme
