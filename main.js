@@ -337,6 +337,37 @@ ipcMain.handle('get-trade-profile', async (_, characterId) => {
   }
 });
 
+// Moon ore reprocessing outputs from the local SDE (invTypeMaterials). Returns
+// { [oreTypeId]: { name, volume, portionSize, outputs:[{id,name,quantity}] } }.
+// Empty {} when the SDE isn't downloaded — the Moon Calculator falls back to its
+// hardcoded primary-moon-material estimate.
+ipcMain.handle('get-moon-reprocessing', async (_, typeIds) => {
+  const out = {};
+  if (!sdeDb || !Array.isArray(typeIds) || !typeIds.length) return out;
+  try {
+    const ph = typeIds.map(() => '?').join(',');
+    const types = await sdeDb.all(
+      `SELECT typeID, typeName, volume, portionSize FROM invTypes WHERE typeID IN (${ph})`, typeIds
+    );
+    for (const t of types) {
+      out[t.typeID] = { name: t.typeName, volume: t.volume, portionSize: t.portionSize || 100, outputs: [] };
+    }
+    const mats = await sdeDb.all(
+      `SELECT m.typeID AS oreId, m.materialTypeID AS matId, m.quantity AS qty, mt.typeName AS matName
+         FROM invTypeMaterials m
+         JOIN invTypes mt ON mt.typeID = m.materialTypeID
+        WHERE m.typeID IN (${ph})`, typeIds
+    );
+    for (const m of mats) {
+      if (out[m.oreId]) out[m.oreId].outputs.push({ id: m.matId, name: m.matName, quantity: m.qty });
+    }
+  } catch (e) {
+    console.log('[moon] reprocessing query failed:', e.message);
+    return {};
+  }
+  return out;
+});
+
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return;   // second instance is quitting — don't init/open
   initPaths();

@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('eveAPI', {
   getHubPrices:          (typeIds, hub) => ipcRenderer.invoke('get-hub-prices', typeIds, hub),
   getHubMeta:            ()       => ipcRenderer.invoke('get-hub-meta'),
   getTradeProfile:       (charId) => ipcRenderer.invoke('get-trade-profile', charId),
+  getMoonReprocessing:   (typeIds) => ipcRenderer.invoke('get-moon-reprocessing', typeIds),
   getTypeMetadata:       (typeIds) => ipcRenderer.invoke('get-type-metadata', typeIds),
   sdeGetPlanetRegions:   ()         => ipcRenderer.invoke('sde-get-planet-regions'),
   sdeGetRegionPlanets:   (regionId) => ipcRenderer.invoke('sde-get-region-planets', regionId),

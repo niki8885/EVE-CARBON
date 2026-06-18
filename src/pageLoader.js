@@ -152,6 +152,9 @@ const PAGE_HTML = {
           <button class="industry-sub-btn" data-industry-tab="gas">
             <span class="industry-sub-icon">⬡</span>Gas Calculator
           </button>
+          <button class="industry-sub-btn" data-industry-tab="moon-calc">
+            <span class="industry-sub-icon">⬡</span>Moon Calculator
+          </button>
           <button class="industry-sub-btn" data-industry-tab="moon">
             <span class="industry-sub-icon">◎</span>Moon Scanning
           </button>

@@ -1057,11 +1057,23 @@ function navigateIndustryTab(tab) {
 }
 
 // ─── Moon Ore Calculator ──────────────────────────────────────────────────────
-// Values raw moon ores by the moon material they reprocess into, at the selected
-// hub/method with skill+standing fees (shared trade toolbar). Material yields per
-// 100-unit batch are from EVE University; moon ore volume = 10 m³/unit (100 units
-// = 1000 m³). Standard-mineral byproducts are intentionally not counted — the moon
-// material dominates the value and is what moon miners optimise for.
+// Values raw moon ores by their FULL reprocessing output — every moon material
+// (R16+ ores yield a secondary goo) plus the standard-mineral byproducts — priced
+// at the selected hub/method with skill+standing fees. Outputs come from the local
+// SDE (invTypeMaterials) for exactness; if the SDE isn't downloaded it falls back
+// to a hardcoded primary-moon-material estimate and prompts the user to fetch it.
+const MOON_TIER_COLORS = { R4: '#7d8fa3', R8: '#4ecbb0', R16: '#5b9bd5', R32: '#e3a84d', R64: '#c05c7e' };
+
+// The 20 base moon ores (first 4 typeIDs of each Moon Asteroid group in the SDE).
+const MOON_ORE_TYPES = [
+  { id: 45490, tier: 'R4' },  { id: 45491, tier: 'R4' },  { id: 45492, tier: 'R4' },  { id: 45493, tier: 'R4' },
+  { id: 45494, tier: 'R8' },  { id: 45495, tier: 'R8' },  { id: 45496, tier: 'R8' },  { id: 45497, tier: 'R8' },
+  { id: 45498, tier: 'R16' }, { id: 45499, tier: 'R16' }, { id: 45500, tier: 'R16' }, { id: 45501, tier: 'R16' },
+  { id: 45502, tier: 'R32' }, { id: 45503, tier: 'R32' }, { id: 45504, tier: 'R32' }, { id: 45506, tier: 'R32' },
+  { id: 45510, tier: 'R64' }, { id: 45511, tier: 'R64' }, { id: 45512, tier: 'R64' }, { id: 45513, tier: 'R64' },
+];
+
+// Fallback (no SDE): primary moon material per ore, base yield per 100-unit batch.
 const MOON_MATERIAL_IDS = {
   'Hydrocarbons': 16633, 'Atmospheric Gases': 16634, 'Evaporite Deposits': 16635, 'Silicates': 16636,
   'Tungsten': 16637, 'Titanium': 16638, 'Scandium': 16639, 'Cobalt': 16640,
@@ -1069,39 +1081,54 @@ const MOON_MATERIAL_IDS = {
   'Mercury': 16646, 'Caesium': 16647, 'Hafnium': 16648, 'Technetium': 16649,
   'Dysprosium': 16650, 'Neodymium': 16651, 'Promethium': 16652, 'Thulium': 16653,
 };
-const MOON_ORE_DATA = [
-  // Ubiquitous (R4) — 65 material / 100 units
-  { name: 'Bitumens', tier: 'R4', volume: 10, batchSize: 100, material: 'Hydrocarbons',       matQty: 65 },
-  { name: 'Coesite',  tier: 'R4', volume: 10, batchSize: 100, material: 'Silicates',          matQty: 65 },
-  { name: 'Sylvite',  tier: 'R4', volume: 10, batchSize: 100, material: 'Evaporite Deposits', matQty: 65 },
-  { name: 'Zeolites', tier: 'R4', volume: 10, batchSize: 100, material: 'Atmospheric Gases',  matQty: 65 },
-  // Common (R8) — 40
-  { name: 'Cobaltite', tier: 'R8', volume: 10, batchSize: 100, material: 'Cobalt',   matQty: 40 },
-  { name: 'Euxenite',  tier: 'R8', volume: 10, batchSize: 100, material: 'Scandium', matQty: 40 },
-  { name: 'Scheelite', tier: 'R8', volume: 10, batchSize: 100, material: 'Tungsten', matQty: 40 },
-  { name: 'Titanite',  tier: 'R8', volume: 10, batchSize: 100, material: 'Titanium', matQty: 40 },
-  // Uncommon (R16) — 40
-  { name: 'Chromite',   tier: 'R16', volume: 10, batchSize: 100, material: 'Chromium', matQty: 40 },
-  { name: 'Otavite',    tier: 'R16', volume: 10, batchSize: 100, material: 'Cadmium',  matQty: 40 },
-  { name: 'Sperrylite', tier: 'R16', volume: 10, batchSize: 100, material: 'Platinum', matQty: 40 },
-  { name: 'Vanadinite', tier: 'R16', volume: 10, batchSize: 100, material: 'Vanadium', matQty: 40 },
-  // Rare (R32) — 50
-  { name: 'Carnotite', tier: 'R32', volume: 10, batchSize: 100, material: 'Technetium', matQty: 50 },
-  { name: 'Cinnabar',  tier: 'R32', volume: 10, batchSize: 100, material: 'Mercury',    matQty: 50 },
-  { name: 'Pollucite', tier: 'R32', volume: 10, batchSize: 100, material: 'Caesium',    matQty: 50 },
-  { name: 'Zircon',    tier: 'R32', volume: 10, batchSize: 100, material: 'Hafnium',    matQty: 50 },
-  // Exceptional (R64) — 22
-  { name: 'Loparite',  tier: 'R64', volume: 10, batchSize: 100, material: 'Promethium', matQty: 22 },
-  { name: 'Monazite',  tier: 'R64', volume: 10, batchSize: 100, material: 'Neodymium',  matQty: 22 },
-  { name: 'Xenotime',  tier: 'R64', volume: 10, batchSize: 100, material: 'Dysprosium', matQty: 22 },
-  { name: 'Ytterbite', tier: 'R64', volume: 10, batchSize: 100, material: 'Thulium',    matQty: 22 },
+const MOON_FALLBACK = [
+  { name: 'Bitumens', tier: 'R4', volume: 10, portionSize: 100, material: 'Hydrocarbons',       matQty: 65 },
+  { name: 'Coesite',  tier: 'R4', volume: 10, portionSize: 100, material: 'Silicates',          matQty: 65 },
+  { name: 'Sylvite',  tier: 'R4', volume: 10, portionSize: 100, material: 'Evaporite Deposits', matQty: 65 },
+  { name: 'Zeolites', tier: 'R4', volume: 10, portionSize: 100, material: 'Atmospheric Gases',  matQty: 65 },
+  { name: 'Cobaltite', tier: 'R8', volume: 10, portionSize: 100, material: 'Cobalt',   matQty: 40 },
+  { name: 'Euxenite',  tier: 'R8', volume: 10, portionSize: 100, material: 'Scandium', matQty: 40 },
+  { name: 'Scheelite', tier: 'R8', volume: 10, portionSize: 100, material: 'Tungsten', matQty: 40 },
+  { name: 'Titanite',  tier: 'R8', volume: 10, portionSize: 100, material: 'Titanium', matQty: 40 },
+  { name: 'Chromite',   tier: 'R16', volume: 10, portionSize: 100, material: 'Chromium', matQty: 40 },
+  { name: 'Otavite',    tier: 'R16', volume: 10, portionSize: 100, material: 'Cadmium',  matQty: 40 },
+  { name: 'Sperrylite', tier: 'R16', volume: 10, portionSize: 100, material: 'Platinum', matQty: 40 },
+  { name: 'Vanadinite', tier: 'R16', volume: 10, portionSize: 100, material: 'Vanadium', matQty: 40 },
+  { name: 'Carnotite', tier: 'R32', volume: 10, portionSize: 100, material: 'Technetium', matQty: 50 },
+  { name: 'Cinnabar',  tier: 'R32', volume: 10, portionSize: 100, material: 'Mercury',    matQty: 50 },
+  { name: 'Pollucite', tier: 'R32', volume: 10, portionSize: 100, material: 'Caesium',    matQty: 50 },
+  { name: 'Zircon',    tier: 'R32', volume: 10, portionSize: 100, material: 'Hafnium',    matQty: 50 },
+  { name: 'Loparite',  tier: 'R64', volume: 10, portionSize: 100, material: 'Promethium', matQty: 22 },
+  { name: 'Monazite',  tier: 'R64', volume: 10, portionSize: 100, material: 'Neodymium',  matQty: 22 },
+  { name: 'Xenotime',  tier: 'R64', volume: 10, portionSize: 100, material: 'Dysprosium', matQty: 22 },
+  { name: 'Ytterbite', tier: 'R64', volume: 10, portionSize: 100, material: 'Thulium',    matQty: 22 },
 ];
-const MOON_TIER_COLORS = { R4: '#7d8fa3', R8: '#4ecbb0', R16: '#5b9bd5', R32: '#e3a84d', R64: '#c05c7e' };
 
 let _moonRefineEff = 72.36;
 let _moonSort      = { col: 'iskM3', dir: -1 };
 let _moonPrices    = {};
+let _moonInfo      = null;   // SDE reprocessing keyed by ore typeId, or null when unavailable
 let _moonLoading   = false;
+
+// Unified ore rows: { tier, name, volume, portionSize, outputs:[{id,name,qty}] }.
+// Uses SDE reprocessing when present, else the primary-material fallback.
+function moonOreRows() {
+  if (_moonInfo) {
+    return MOON_ORE_TYPES.map(o => {
+      const info = _moonInfo[o.id];
+      if (!info || !info.outputs || !info.outputs.length) return null;
+      return {
+        tier: o.tier, name: info.name || `Type ${o.id}`,
+        volume: info.volume || 10, portionSize: info.portionSize || 100,
+        outputs: info.outputs.map(m => ({ id: m.id, name: m.name, qty: m.quantity })),
+      };
+    }).filter(Boolean);
+  }
+  return MOON_FALLBACK.map(o => ({
+    tier: o.tier, name: o.name, volume: o.volume, portionSize: o.portionSize,
+    outputs: [{ id: MOON_MATERIAL_IDS[o.material], name: o.material, qty: o.matQty }],
+  }));
+}
 
 async function renderMoonCalculator(container) {
   const accounts = await window.eveAPI.getAccounts().catch(() => []);
@@ -1129,22 +1156,20 @@ async function renderMoonCalculator(container) {
           <thead>
             <tr style="border-bottom:2px solid var(--border);background:var(--bg-card);position:sticky;top:0;z-index:1;">
               <th class="moon-th" data-col="tier"     style="text-align:left;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">TIER ↕</th>
-              <th class="moon-th" data-col="name"     style="text-align:left;padding:10px 8px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">MOON ORE ↕</th>
-              <th class="moon-th" data-col="material" style="text-align:left;padding:10px 8px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">MATERIAL ↕</th>
-              <th class="moon-th" data-col="matPrice" style="text-align:right;padding:10px 8px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">MATERIAL/UNIT ↕</th>
-              <th class="moon-th" data-col="iskUnit"  style="text-align:right;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">REFINE ISK/UNIT ↕</th>
-              <th class="moon-th" data-col="iskM3"    style="text-align:right;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:0.1em;color:var(--accent);">REFINE ISK/M³ ↕</th>
+              <th class="moon-th" data-col="name"    style="text-align:left;padding:10px 8px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">MOON ORE ↕</th>
+              <th style="text-align:left;padding:10px 8px;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">OUTPUTS</th>
+              <th class="moon-th" data-col="iskUnit" style="text-align:right;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">REFINE ISK/UNIT ↕</th>
+              <th class="moon-th" data-col="iskM3"   style="text-align:right;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:0.1em;color:var(--accent);">REFINE ISK/M³ ↕</th>
             </tr>
           </thead>
           <tbody id="moonTableBody">
-            <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-3);font-family:var(--mono);font-size:12px;">⬡ Fetching prices…</td></tr>
+            <tr><td colspan="5" style="text-align:center;padding:40px;color:var(--text-3);font-family:var(--mono);font-size:12px;">⬡ Fetching prices…</td></tr>
           </tbody>
         </table>
       </div>
 
       <div style="padding:8px 16px;border-top:1px solid var(--border);background:var(--bg-card);font-size:10px;color:var(--text-3);font-family:var(--mono);flex-shrink:0;">
-        Values each moon ore by the moon material it reprocesses into, net of sales tax (+ broker fee for Sell/Split),
-        at your efficiency. Standard-mineral byproducts are not counted. Base yields per 100 units: R4 65 · R8/R16 40 · R32 50 · R64 22.
+        Net of sales tax (+ broker fee for Sell/Split) at your reprocessing efficiency. <span id="moonModeHint"></span>
       </div>
     </div>`;
 
@@ -1174,16 +1199,28 @@ async function loadMoonPrices() {
   const refreshBtn = document.getElementById('moonRefreshBtn');
   if (refreshBtn) refreshBtn.disabled = true;
   try {
-    const ids = [...new Set(Object.values(MOON_MATERIAL_IDS))];
-    const raw = await window.eveAPI.getHubPrices(ids, _trade.hub);
-    _moonPrices = raw || {};
+    // Pull exact reprocessing from the local SDE; null/empty → primary-material fallback.
+    try {
+      const repro = await window.eveAPI.getMoonReprocessing(MOON_ORE_TYPES.map(o => o.id));
+      _moonInfo = (repro && Object.keys(repro).length) ? repro : null;
+    } catch (_) { _moonInfo = null; }
+
+    const rows     = moonOreRows();
+    const priceIds = [...new Set(rows.flatMap(r => r.outputs.map(o => o.id)).filter(Boolean))];
+    _moonPrices    = (priceIds.length ? await window.eveAPI.getHubPrices(priceIds, _trade.hub) : {}) || {};
+
+    const hint = document.getElementById('moonModeHint');
+    if (hint) hint.textContent = _moonInfo
+      ? 'Full reprocessing from SDE — all moon materials + minerals.'
+      : 'SDE not found: showing primary moon material only. Run “npm run fetch-sde” for full values.';
+
     const ageEl = document.getElementById('moonPriceAge');
     if (ageEl) ageEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
     buildMoonTable();
   } catch (err) {
     logToConsole(`Moon prices fetch failed: ${err.message}`, 'error');
     const body = document.getElementById('moonTableBody');
-    if (body) body.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--danger);font-family:var(--mono);font-size:12px;">⚠ Failed to fetch prices: ${escHtml(err.message)}</td></tr>`;
+    if (body) body.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:40px;color:var(--danger);font-family:var(--mono);font-size:12px;">⚠ Failed to fetch prices: ${escHtml(err.message)}</td></tr>`;
   } finally {
     _moonLoading = false;
     const btn = document.getElementById('moonRefreshBtn');
@@ -1192,46 +1229,50 @@ async function loadMoonPrices() {
 }
 
 function calcMoonRow(ore) {
-  const matPrice   = tradePrice(_moonPrices[MOON_MATERIAL_IDS[ore.material]]);
-  const iskPerUnit = TradeMath.reprocessUnitValue(ore.matQty, matPrice, _moonRefineEff / 100, ore.batchSize, tradeNetFactor());
+  const eff = _moonRefineEff / 100, net = tradeNetFactor();
+  let perPortion = 0;
+  const parts = [];
+  for (const o of ore.outputs) {
+    const price = tradePrice(_moonPrices[o.id]);
+    perPortion += TradeMath.reprocessUnitValue(o.qty, price, eff, 1, net);  // floor(qty*eff)*price*net per portion
+    parts.push({ id: o.id, name: o.name, yielded: Math.floor((o.qty || 0) * eff) });
+  }
+  const iskPerUnit = ore.portionSize ? perPortion / ore.portionSize : 0;
   const iskPerM3   = ore.volume > 0 ? iskPerUnit / ore.volume : 0;
-  return { matPrice, iskPerUnit, iskPerM3 };
+  return { iskPerUnit, iskPerM3, parts };
 }
 
 function buildMoonTable() {
   const body = document.getElementById('moonTableBody');
   if (!body) return;
   const tierOrder = { R4: 0, R8: 1, R16: 2, R32: 3, R64: 4 };
-  const rows = MOON_ORE_DATA.map(ore => ({ ore, ...calcMoonRow(ore) }));
+  const rows = moonOreRows().map(ore => ({ ore, ...calcMoonRow(ore) }));
 
   const col = _moonSort.col, dir = _moonSort.dir;
   rows.sort((a, b) => {
-    if      (col === 'name')     return dir * a.ore.name.localeCompare(b.ore.name);
-    else if (col === 'material') return dir * a.ore.material.localeCompare(b.ore.material);
-    else if (col === 'tier')     return dir * (tierOrder[a.ore.tier] - tierOrder[b.ore.tier]);
-    else if (col === 'matPrice') return dir * (a.matPrice   - b.matPrice);
-    else if (col === 'iskUnit')  return dir * (a.iskPerUnit  - b.iskPerUnit);
+    if      (col === 'name')    return dir * a.ore.name.localeCompare(b.ore.name);
+    else if (col === 'tier')    return dir * (tierOrder[a.ore.tier] - tierOrder[b.ore.tier]);
+    else if (col === 'iskUnit') return dir * (a.iskPerUnit - b.iskPerUnit);
     return dir * (a.iskPerM3 - b.iskPerM3);
   });
 
   const maxIskM3 = Math.max(...rows.map(r => r.iskPerM3), 1);
   body.innerHTML = rows.map((r, i) => {
-    const { ore, matPrice, iskPerUnit, iskPerM3 } = r;
+    const { ore, iskPerUnit, iskPerM3, parts } = r;
     const tc    = MOON_TIER_COLORS[ore.tier] || 'var(--text-3)';
     const isTop = i === 0;
     const barW  = Math.round((iskPerM3 / maxIskM3) * 100);
-    const matId = MOON_MATERIAL_IDS[ore.material];
+    const icons = parts.slice(0, 6).map(p =>
+      `<img src="https://images.evetech.net/types/${p.id}/icon?size=32" title="${escHtml(p.name)} ×${formatNumber(p.yielded)}" onerror="this.onerror=null;this.style.display='none';" style="width:20px;height:20px;border-radius:3px;border:1px solid var(--border);flex-shrink:0;">`).join('');
+    const more  = parts.length > 6 ? `<span style="color:var(--text-3);font-size:10px;">+${parts.length - 6}</span>` : '';
+    const tip   = parts.map(p => `${p.name} ×${formatNumber(p.yielded)}`).join(', ');
     return `
       <tr style="border-bottom:1px solid var(--border);background:${isTop ? 'rgba(255,255,255,0.03)' : 'transparent'};${isTop ? 'outline:1px solid var(--accent);' : ''}">
         <td style="padding:10px 14px;white-space:nowrap;"><span style="font-family:var(--mono);font-size:10px;color:${tc};">${ore.tier}</span></td>
         <td style="padding:10px 8px;color:var(--text-1);font-weight:600;">${escHtml(ore.name)}</td>
-        <td style="padding:10px 8px;">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <img src="https://images.evetech.net/types/${matId}/icon?size=32" onerror="this.onerror=null;this.style.display='none';" style="width:22px;height:22px;border-radius:3px;border:1px solid var(--border);flex-shrink:0;">
-            <span style="color:var(--text-2);">${escHtml(ore.material)}</span>
-          </div>
+        <td style="padding:10px 8px;" title="${escHtml(tip)}">
+          <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${icons}${more}</div>
         </td>
-        <td style="padding:10px 8px;text-align:right;font-family:var(--mono);color:var(--text-2);">${matPrice > 0 ? formatNumber(matPrice) : '—'}</td>
         <td style="padding:10px 14px;text-align:right;font-family:var(--mono);color:var(--text-2);">${iskPerUnit > 0 ? formatNumber(iskPerUnit) : '—'}</td>
         <td style="padding:10px 14px;text-align:right;">
           <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
