@@ -222,17 +222,22 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
   // Uses ON CONFLICT(id) DO UPDATE inside upsertNpcStations / upsertUpwellStructures,
   // so duplicate IDs are handled safely — no extra check needed here.
   async function _persistToStationDb(id, result) {
-    if (!result.name) return;
-    // Reject generic fallbacks AND any ESI error body (incl. "No structure
-    // found with that ID!", which the old narrower guard let through and which
-    // is exactly what poisoned the structure cache).
-    if (_isUnresolvedName(result.name)) return;
-    if (result.name.length > 200) return; // sanity guard
+    // A name we can trust: present, not an ESI error / "Structure {id}" fallback,
+    // and sane length. (The fallback guard is what stops the structure cache
+    // from being poisoned by "No structure found with that ID!" et al.)
+    const nameOk = result.name
+      && !_isUnresolvedName(result.name)
+      && result.name.length <= 200;
+    // Even when the NAME can't be read (e.g. 403 — no docking rights), the
+    // SOLAR SYSTEM is often still recoverable from the scrape/geo chain. Cache
+    // that on its own so the UI can show "Unknown Structure — {System}" instead
+    // of a raw id. Nothing to persist only when we have neither.
+    if (!nameOk && !result.solar_system_id) return;
     if (typeof upsertNpcStations !== 'function' || typeof upsertUpwellStructures !== 'function') return;
     const numId = Number(id);
     const row   = {
       id:                numId,
-      name:              result.name,
+      name:              nameOk ? result.name : null, // null never clobbers an existing real name (COALESCE upsert)
       solar_system_id:   result.solar_system_id   || null,
       solar_system_name: result.solar_system_name || null,
       region_id:         result.region_id         || null,
@@ -245,7 +250,7 @@ module.exports = function createLocator({ httpGet, readCache, writeCache, getVal
       } else {
         await upsertUpwellStructures([row]);
       }
-      console.log(`[locator] Persisted resolved name "${result.name}" (${numId}) to local DB.`);
+      console.log(`[locator] Persisted ${nameOk ? `name "${result.name}"` : `system-only (${result.solar_system_name || result.solar_system_id})`} (${numId}) to local DB.`);
     } catch (e) {
       console.warn(`[locator] Failed to persist ${numId} to local DB: ${e.message}`);
     }

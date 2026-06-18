@@ -550,70 +550,152 @@ async function getCharacterAssets(characterId) {
   if (!charDb) return [];
   const p = `char_${characterId}`;
   try {
-    // ── Why this query is structured this way ────────────────────────────────
+    // ── How assets are placed ────────────────────────────────────────────────
     //
-    // ESI returns assets as a FLAT list.  Items inside containers or fitted to
-    // ships have location_id = the parent item's item_id (not a station/structure
-    // ID), so their region_name / solar_system_name are NULL in the DB.
+    // ESI returns assets as a FLAT list. A row's location_id points at its
+    // IMMEDIATE parent — a station, a structure, a solar system, or ANOTHER
+    // item the character owns (a ship or container). Only rows whose parent is
+    // a root (station/structure/system) get a resolved location_name at sync
+    // time; deeper-nested rows (a module in a container in a ship in a
+    // structure) store NULL and must inherit their place from an ancestor.
     //
-    // We resolve this with a LEFT JOIN back onto the same table (one level up).
-    // If a row's location_id matches another row's item_id, that parent row's
-    // location data (solar_system_name, region_name, etc.) is used instead.
-    // This covers items in containers AND items fitted to ships in a hangar.
-    //
-    // We also add location_flag to the GROUP BY so that the same item type in
-    // different slots/flags (e.g. Hangar vs CargoHold vs HiSlot0) are NOT
-    // collapsed into one row — the old query caused large quantity losses here.
-    //
-    // Singleton items (assembled ships, fitted modules) are excluded from
-    // stacking so each physical item stays distinct.
+    // We resolve this exactly like the asset-location recursion: build an
+    // item_id → row index, then for each row walk the location_id pointers up
+    // to the TERMINUS (the first ancestor that carries a resolved location).
+    // The membership test — "is this location_id one of MY item_ids?" — is what
+    // separates a container I own (keep climbing) from the Upwell structure I
+    // merely dock in (climb ends). This handles arbitrary nesting depth, where
+    // the old fixed-depth self-JOIN silently failed past three hops.
     // ─────────────────────────────────────────────────────────────────────────
-    return await charDb.all(`
+
+    // The location bundle that travels up the chain together. Borrowing these
+    // as a set (not field-by-field) keeps a row's place internally consistent.
+    const LOC_FIELDS = [
+      'location_name', 'solar_system_id', 'solar_system_name',
+      'region_id', 'region_name', 'security_status', 'owner_id', 'owner_name',
+    ];
+
+    // 1. Index every raw row by item_id so we can test membership and climb.
+    //    Only the fields needed to walk + the location bundle are loaded.
+    const rawRows = await charDb.all(
+      `SELECT item_id, location_id, ${LOC_FIELDS.join(', ')} FROM ${p}_assets`
+    );
+    const byItemId = new Map();
+    for (const r of rawRows) byItemId.set(r.item_id, r);
+
+    // A name that is really a placeholder, not a place. Mirrors the locator's
+    // _isUnresolvedName so we never treat a fallback as a resolved terminus.
+    const isPlaceholder = (s) => !s
+      || /^(structure|location|station)\s+\d+$/i.test(s)
+      || /no structure found|not found|forbidden|^error/i.test(s);
+
+    // The TERMINUS of a walk is often a structure/station the character does
+    // NOT own as an asset, so it never appears as a row. Its name may still be
+    // known globally — resolved by ANOTHER of the user's characters (Upwell
+    // structures), present in the NPC-station cache, or in names_cache. Index
+    // those by id so a dead-ended walk can still find a place. Placeholders
+    // ("Structure {id}", closed/unresolved names) are skipped on purpose.
+    const globalLoc = new Map();
+    const loadGlobal = async (table, extra) => {
+      try {
+        const rows = await charDb.all(`SELECT * FROM ${table}`);
+        for (const r of rows) {
+          if (globalLoc.has(r.id)) continue;
+          const named = !isPlaceholder(r.name);
+          const hasSystem = r.solar_system_id != null || r.solar_system_name != null;
+          // Skip only when the row gives us NOTHING usable. A structure whose
+          // name we still can't read but whose SYSTEM is known is kept (name
+          // dropped) so the UI can at least show the solar system.
+          if (!named && !hasSystem) continue;
+          globalLoc.set(r.id, {
+            location_name: named ? r.name : null,
+            solar_system_id: r.solar_system_id ?? null,
+            solar_system_name: r.solar_system_name ?? null,
+            region_id: r.region_id ?? null,
+            region_name: r.region_name ?? null,
+            security_status: r.security_status ?? null,
+            ...extra,
+          });
+        }
+      } catch { /* table may not exist yet */ }
+    };
+    // Order matters: structures (richest, char-specific) first, then NPC
+    // stations, then bare names_cache (name only) as a last resort.
+    await loadGlobal('upwell_structures');
+    await loadGlobal('npc_stations');
+    await loadGlobal('names_cache');
+
+    // hasLoc — does this row already carry a resolved place? A bare
+    // "Structure {id}" fallback does NOT count: if we stopped there the walk
+    // would never reach the global cache that may hold the real name/system.
+    const hasLoc = (row) =>
+      row && (!isPlaceholder(row.location_name) || row.solar_system_name != null);
+
+    // resolveBundle(row) — return the location bundle for a row, climbing the
+    // parent chain when the row itself is unresolved. When the climb dead-ends
+    // at a terminus the character doesn't own, fall back to the global caches.
+    // Memoised; depth-capped at 10 against cycles/corruption (~4-5 in practice).
+    const memo = new Map();
+    const resolveBundle = (row) => {
+      if (!row) return null;
+      if (memo.has(row.item_id)) return memo.get(row.item_id);
+      // Tentatively memoise null to break cycles mid-walk.
+      memo.set(row.item_id, null);
+
+      let cur = row;
+      let terminusId = row.location_id; // last id whose owner we looked for
+      for (let depth = 0; depth < 10; depth++) {
+        if (hasLoc(cur)) break;            // found the resolved ancestor
+        terminusId = cur.location_id;
+        const parent = byItemId.get(cur.location_id);
+        if (!parent) { cur = null; break; } // location_id isn't ours → terminus
+        if (parent === cur) { cur = null; break; } // self-loop guard
+        cur = parent;
+      }
+
+      const bundle = hasLoc(cur)
+        ? Object.fromEntries(LOC_FIELDS.map((f) => [f, cur[f]]))
+        : (globalLoc.get(terminusId) || null); // unowned terminus → global cache
+      memo.set(row.item_id, bundle);
+      return bundle;
+    };
+
+    // 2. Stack/group rows the same way the old query did. We GROUP in SQL (the
+    //    cheap part) but DROP the parent JOINs — the JS walk above resolves the
+    //    place. MIN(item_id) per group is the representative we walk from.
+    const grouped = await charDb.all(`
       SELECT
-        MIN(a.item_id)                        AS item_id,
+        MIN(a.item_id)                            AS item_id,
         a.type_id,
         a.type_name,
         a.location_id,
         a.location_flag,
 
-        -- Walk up one level: if this item is inside a container/ship,
-        -- borrow the parent's resolved location fields.
-        COALESCE(a.location_name,     p.location_name)     AS location_name,
-        COALESCE(a.solar_system_id,   p.solar_system_id)   AS solar_system_id,
-        COALESCE(a.solar_system_name, p.solar_system_name) AS solar_system_name,
-        COALESCE(a.region_id,         p.region_id)         AS region_id,
-        COALESCE(a.region_name,       p.region_name)       AS region_name,
-        COALESCE(a.security_status,   p.security_status)   AS security_status,
-        COALESCE(a.owner_id,          p.owner_id)          AS owner_id,
-        COALESCE(a.owner_name,        p.owner_name)        AS owner_name,
+        a.location_name,
+        a.solar_system_id,
+        a.solar_system_name,
+        a.region_id,
+        a.region_name,
+        a.security_status,
+        a.owner_id,
+        a.owner_name,
 
-        SUM(a.quantity)                                     AS quantity,
-        SUM(COALESCE(a.volume, 0) * a.quantity)             AS volume,
-        MAX(a.is_singleton)                                 AS is_singleton,
+        SUM(a.quantity)                           AS quantity,
+        SUM(COALESCE(a.volume, 0) * a.quantity)   AS volume,
+        MAX(a.is_singleton)                       AS is_singleton,
 
-        -- Blueprint copy/original flag, borrowed from the blueprints table by
-        -- item_id (same physical item across both ESI endpoints):
-        --   1 = copy (BPC), 0 = original (BPO), NULL = not a blueprint.
-        -- Lets valuation price copies at 0.01 and originals at their real value
-        -- instead of pricing both at the original's market price.
-        MAX(bpc.is_bpc)                                     AS is_bpc,
+        -- Blueprint copy/original flag (1 = copy/BPC, 0 = original/BPO,
+        -- NULL = not a blueprint). Lets valuation price copies at 0.01.
+        MAX(bpc.is_bpc)                           AS is_bpc,
 
-        MAX(a.synced_at)                                    AS synced_at
+        MAX(a.synced_at)                          AS synced_at
 
       FROM ${p}_assets a
-
-      -- parent row: the container or ship this item lives inside, if any
-      LEFT JOIN ${p}_assets p
-        ON p.item_id = a.location_id
-
-      -- blueprint metadata for this exact item, if it is a blueprint
-      LEFT JOIN ${p}_blueprints bpc
-        ON bpc.item_id = a.item_id
+      LEFT JOIN ${p}_blueprints bpc ON bpc.item_id = a.item_id
 
       -- Stack non-singleton items of the same type in the same slot/flag.
       -- Singletons (assembled ships, fitted modules) always get their own row.
-      -- is_bpc is in the GROUP BY so a BPO and a BPC of the same blueprint in
-      -- the same location never merge into one (mis-priced) row.
+      -- is_bpc is in the GROUP BY so a BPO and a BPC never merge (mis-priced).
       GROUP BY
         a.type_id,
         a.location_id,
@@ -623,6 +705,40 @@ async function getCharacterAssets(characterId) {
 
       ORDER BY a.type_name ASC
     `);
+
+    // 3. Fill in each group's place by walking the chain. All rows in a group
+    //    share location_id, so resolving the representative resolves the group.
+    //    We enrich a group when it lacks a REAL name (placeholder counts as
+    //    missing) or lacks a system — and only fill the gaps, never overwriting
+    //    a good value with a worse one. This lets a structure whose name is
+    //    still unknown inherit at least its solar system from the global cache.
+    for (const g of grouped) {
+      const haveName = g.location_name != null && !isPlaceholder(g.location_name);
+      const haveSystem = g.solar_system_name != null;
+      if (haveName && haveSystem) continue;
+
+      const bundle =
+        resolveBundle(byItemId.get(g.location_id)) ||
+        resolveBundle(byItemId.get(g.item_id)) ||
+        globalLoc.get(g.location_id) ||
+        null;
+      if (!bundle) continue;
+
+      // Replace a placeholder name with the bundle's REAL name, or NULL it so
+      // the UI falls back to the solar system instead of showing "Structure {id}".
+      // (Never re-apply a placeholder the bundle may have carried up.)
+      if (!haveName) {
+        g.location_name = (bundle.location_name != null && !isPlaceholder(bundle.location_name))
+          ? bundle.location_name
+          : null;
+      }
+      for (const f of LOC_FIELDS) {
+        if (f === 'location_name') continue;
+        if (g[f] == null && bundle[f] != null) g[f] = bundle[f];
+      }
+    }
+
+    return grouped;
   } catch (e) {
     console.error(`[CharDB] getCharacterAssets failed for ${characterId}:`, e.message);
     return [];
@@ -956,7 +1072,8 @@ async function upsertNpcStations(rows) {
            (id, name, solar_system_id, solar_system_name, region_id, region_name, security_status, synced_at)
          VALUES (?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET
-           name              = excluded.name,
+           -- Preserve an existing real name when the new one is NULL.
+           name              = COALESCE(excluded.name,              name),
            solar_system_id   = COALESCE(excluded.solar_system_id,   solar_system_id),
            solar_system_name = COALESCE(excluded.solar_system_name, solar_system_name),
            region_id         = COALESCE(excluded.region_id,         region_id),
@@ -994,7 +1111,10 @@ async function upsertUpwellStructures(rows) {
            (id, name, solar_system_id, solar_system_name, region_id, region_name, security_status, synced_at)
          VALUES (?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET
-           name              = excluded.name,
+           -- Preserve an existing real name when the new one is NULL (a
+           -- system-only resolution). A genuine rename still updates because
+           -- excluded.name is then non-null.
+           name              = COALESCE(excluded.name,              name),
            solar_system_id   = COALESCE(excluded.solar_system_id,   solar_system_id),
            solar_system_name = COALESCE(excluded.solar_system_name, solar_system_name),
            region_id         = COALESCE(excluded.region_id,         region_id),

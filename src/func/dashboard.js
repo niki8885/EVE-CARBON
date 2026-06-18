@@ -510,7 +510,17 @@ async function loadDashboard() {
         ? info.security_status.toFixed(1) : '—';
 
       // ── Home location — from location table (station_name preferred) ──────
-      const homeStationName = loc?.station_name || loc?.solar_system_name || '—';
+      // Guard against stale/poison names leaking into the UI: an ESI error body
+      // ("No structure found with that ID!") or a generic "Structure 12345" /
+      // "Location 99" fallback is not a real place — fall back to the solar
+      // system name, then a dash. Mirrors the locator's _isUnresolvedName guard.
+      const _badLocName = (s) => !s
+        || /^(structure|location)\s/i.test(s)
+        || /no structure found|not found|forbidden|error/i.test(s);
+      const homeStationName =
+        (!_badLocName(loc?.station_name) && loc.station_name)
+        || loc?.solar_system_name
+        || '—';
       // Security for colour-coding: stored as security_status in assets table;
       // location table doesn't store sec — leave null (no breadcrumb, just name)
       const homeSystemSec = null;

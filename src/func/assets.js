@@ -1,5 +1,15 @@
 // ─── Assets ───────────────────────────────────────────────────────────────────
 
+// A location name that is actually a placeholder, not a real place: an empty
+// value, an ESI error string, or a bare "Structure {id}" / "Location {id}" /
+// "Station {id}" fallback. Mirrors the locator's _isUnresolvedName so the UI
+// can fall back to the solar system instead of showing a meaningless id.
+function isUnresolvedLocName(s) {
+  return !s
+    || /^(structure|location|station)\s+\d+$/i.test(s)
+    || /no structure found|not found|forbidden|^error/i.test(s);
+}
+
 // ── Blueprint-aware valuation ────────────────────────────────────────────────
 // CCP's global adjusted/average price map (one cached call), used to value
 // blueprint originals (BPOs) — including seeded Titan/Super BPOs that have no
@@ -346,14 +356,24 @@ function renderAssetTree() {
   // different systems apart. Falls back to location_id when unresolved.
   const locMap = new Map(); // locKey → { meta, charMap: Map(charId → { ... items[] }) }
   for (const asset of source) {
-    const locKey = asset.location_name
+    // A name that is really a placeholder ("Structure 1037…", an ESI error),
+    // not a place. When the name can't be resolved but we DO know the solar
+    // system, fall back to showing the system rather than a raw id.
+    const named  = !isUnresolvedLocName(asset.location_name);
+    const sysName = asset.solar_system_name || '';
+    const label = named
+      ? asset.location_name
+      : (sysName ? `Unknown Structure — ${sysName}` : `Location ${asset.location_id}`);
+    // Keep distinct unknown structures apart by location_id (don't merge two
+    // unnamed citadels in the same system); group named ones by name+system.
+    const locKey = named
       ? `${asset.location_name}||${asset.solar_system_id || ''}`
       : String(asset.location_id || 'unknown');
     if (!locMap.has(locKey)) {
       locMap.set(locKey, {
         key:             locKey,
-        locationName:    asset.location_name     || `Location ${asset.location_id}`,
-        solarSystemName: asset.solar_system_name || '',
+        locationName:    label,
+        solarSystemName: sysName,
         regionName:      asset.region_name       || '',
         secStatus:       asset.security_status,
         charMap:         new Map(),
