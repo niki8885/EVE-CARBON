@@ -109,6 +109,7 @@ const SCOPES         = [
   'esi-location.read_ship_type.v1',             // current ship type
   'esi-planets.manage_planets.v1',              // planetary interaction colonies
   'esi-characters.read_loyalty.v1',             // loyalty points per corporation
+  'esi-characters.read_standings.v1',           // NPC faction/corp standings (broker-fee reduction in trade calc)
   'esi-skills.read_skills.v1',                  // total skill points 
   'esi-skills.read_skillqueue.v1',              // current skill queue (for estimating free time until next SP gain) 
   'esi-fleets.read_fleet.v1',                    // for fleet role tags in Jabber messages (e.g. FC, squad commander, etc.)
@@ -317,6 +318,24 @@ ipcMain.handle('open-external-url', (_, url) => {
   if (url && /^https?:\/\//i.test(url)) shell.openExternal(url);
 });
 ipcMain.handle('get-app-version', () => app.getVersion());
+
+// Trade-fee profile for the Ore/Ice/Gas calculators: Accounting + Broker
+// Relations skill levels and NPC standings (keyed by from_id). Returns nulls if
+// the character hasn't been synced yet so the renderer can fall back to defaults.
+ipcMain.handle('get-trade-profile', async (_, characterId) => {
+  if (!characterId) return null;
+  try {
+    const profile   = await charInfoDb.getTradeProfile(characterId);
+    const standings = await charInfoDb.getStandings(characterId);
+    return {
+      accounting:      profile ? profile.accounting      : null,
+      brokerRelations: profile ? profile.brokerRelations : null,
+      standings:       standings || {},
+    };
+  } catch (e) {
+    return { accounting: null, brokerRelations: null, standings: {} };
+  }
+});
 
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return;   // second instance is quitting — don't init/open
@@ -1577,7 +1596,34 @@ async function coreCharacterSync(characterId, characterName, progressCb) {
     summary.steps.wallet_journal = `error: ${e.message}`;
     report('wallet_journal', `✗ ${e.message}`);
   }
- 
+
+  // 9. Market-fee profile — trade skills + NPC standings (for Ore/Ice/Gas calc)
+  try {
+    report('trade_profile', 'Fetching trade skills…');
+    const ACCOUNTING_ID = 16622, BROKER_RELATIONS_ID = 3446;
+    const skillsData = await httpGet(`${ESI_BASE}/v4/characters/${characterId}/skills/?datasource=tranquility`, authHdr);
+    const skills = Array.isArray(skillsData?.skills) ? skillsData.skills : [];
+    const lvl = (id) => (skills.find(s => s.skill_id === id)?.active_skill_level) || 0;
+    const acct = lvl(ACCOUNTING_ID), broker = lvl(BROKER_RELATIONS_ID);
+    await charInfoDb.replaceTradeProfile(characterId, { accounting: acct, brokerRelations: broker });
+    summary.steps.trade_skills = `acct ${acct} / broker ${broker}`;
+    report('trade_profile', `✓ Accounting ${acct}, Broker Relations ${broker}`);
+  } catch (e) { summary.steps.trade_skills = `error: ${e.message}`; report('trade_profile', `✗ skills: ${e.message}`); }
+
+  try {
+    report('trade_profile', 'Fetching standings…');
+    const standings = await httpGet(`${ESI_BASE}/v1/characters/${characterId}/standings/?datasource=tranquility`, authHdr);
+    if (Array.isArray(standings)) {
+      await charInfoDb.replaceStandings(characterId, standings);
+      summary.steps.standings = `${standings.length} entries`;
+      report('trade_profile', `✓ ${standings.length} standings`);
+    }
+  } catch (e) {
+    // Pre-re-auth tokens lack esi-characters.read_standings.v1 → 403; degrade gracefully.
+    summary.steps.standings = `error: ${e.message}`;
+    report('trade_profile', `✗ standings: ${e.message} (re-login to grant read_standings)`);
+  }
+
   return summary;
 }
 

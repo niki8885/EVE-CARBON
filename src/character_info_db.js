@@ -254,6 +254,23 @@ async function ensureCharacterTables(characterId) {
       loyalty_points    INTEGER,
       synced_at         INTEGER
     );
+
+    -- Market-fee skills (ESI /characters/{id}/skills/) — single row (id = 1)
+    CREATE TABLE IF NOT EXISTS ${p}_trade_skills (
+      id               INTEGER PRIMARY KEY CHECK (id = 1),
+      accounting       INTEGER,
+      broker_relations INTEGER,
+      synced_at        INTEGER
+    );
+
+    -- NPC standings (ESI /characters/{id}/standings/) — faction & corp standings
+    -- used to reduce the broker fee at trade hubs.
+    CREATE TABLE IF NOT EXISTS ${p}_standings (
+      from_id    INTEGER PRIMARY KEY,
+      from_type  TEXT,
+      standing   REAL,
+      synced_at  INTEGER
+    );
   `);
 
   // ── Migrate existing tables: add columns that may be missing ────────────────
@@ -873,9 +890,72 @@ async function getCharacterPIColonies(characterId) {
   }
 }
 
+// ── Trade profile: market-fee skills + NPC standings ────────────────────────
+// Used by the Ore/Ice/Gas calculators to compute sales tax (Accounting) and
+// broker fee (Broker Relations + faction/corp standing at the chosen hub).
+async function replaceTradeProfile(characterId, profile) {
+  if (!charDb || !profile) return;
+  const p   = `char_${characterId}`;
+  const now = Date.now();
+  await charDb.run(
+    `INSERT INTO ${p}_trade_skills (id, accounting, broker_relations, synced_at)
+     VALUES (1, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       accounting       = excluded.accounting,
+       broker_relations = excluded.broker_relations,
+       synced_at        = excluded.synced_at`,
+    [Number(profile.accounting) || 0, Number(profile.brokerRelations) || 0, now]
+  );
+}
+
+async function getTradeProfile(characterId) {
+  if (!charDb) return null;
+  try {
+    const row = await charDb.get(
+      `SELECT accounting, broker_relations FROM char_${characterId}_trade_skills WHERE id = 1`
+    );
+    if (!row) return null;
+    return { accounting: row.accounting || 0, brokerRelations: row.broker_relations || 0 };
+  } catch { return null; }
+}
+
+async function replaceStandings(characterId, rows) {
+  if (!charDb) return;
+  const p   = `char_${characterId}`;
+  const now = Date.now();
+  await withTx(async () => {
+    await charDb.run(`DELETE FROM ${p}_standings`);
+    for (const r of (rows || [])) {
+      if (!r || r.from_id == null) continue;
+      await charDb.run(
+        `INSERT OR REPLACE INTO ${p}_standings (from_id, from_type, standing, synced_at)
+         VALUES (?,?,?,?)`,
+        [Number(r.from_id), r.from_type || null, Number(r.standing) || 0, now]
+      );
+    }
+  });
+}
+
+// Returns { fromId: standing } for fast lookup by the renderer.
+async function getStandings(characterId) {
+  if (!charDb) return {};
+  try {
+    const rows = await charDb.all(
+      `SELECT from_id, standing FROM char_${characterId}_standings`
+    );
+    const out = {};
+    for (const r of rows) out[r.from_id] = r.standing;
+    return out;
+  } catch { return {}; }
+}
+
 module.exports = {
   initCharacterDb,
   ensureCharacterTables,
+  replaceTradeProfile,
+  getTradeProfile,
+  replaceStandings,
+  getStandings,
   upsertCharacterInfo,
   insertWalletSnapshot,
   upsertLocation,

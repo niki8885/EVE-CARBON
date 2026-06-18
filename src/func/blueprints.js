@@ -1023,6 +1023,9 @@ function navigateIndustryTab(tab) {
   } else if (tab === 'gas') {
     renderGasCalculator(right);
 
+  } else if (tab === 'moon-calc') {
+    renderMoonCalculator(right);
+
   } else if (tab === 'salvage') {
     if (typeof renderSalvageCalculator === 'function') renderSalvageCalculator(right);
 
@@ -1051,6 +1054,195 @@ function navigateIndustryTab(tab) {
         <div class="empty-sub">Coming soon.</div>
       </div>`;
   }
+}
+
+// ─── Moon Ore Calculator ──────────────────────────────────────────────────────
+// Values raw moon ores by the moon material they reprocess into, at the selected
+// hub/method with skill+standing fees (shared trade toolbar). Material yields per
+// 100-unit batch are from EVE University; moon ore volume = 10 m³/unit (100 units
+// = 1000 m³). Standard-mineral byproducts are intentionally not counted — the moon
+// material dominates the value and is what moon miners optimise for.
+const MOON_MATERIAL_IDS = {
+  'Hydrocarbons': 16633, 'Atmospheric Gases': 16634, 'Evaporite Deposits': 16635, 'Silicates': 16636,
+  'Tungsten': 16637, 'Titanium': 16638, 'Scandium': 16639, 'Cobalt': 16640,
+  'Chromium': 16641, 'Vanadium': 16642, 'Cadmium': 16643, 'Platinum': 16644,
+  'Mercury': 16646, 'Caesium': 16647, 'Hafnium': 16648, 'Technetium': 16649,
+  'Dysprosium': 16650, 'Neodymium': 16651, 'Promethium': 16652, 'Thulium': 16653,
+};
+const MOON_ORE_DATA = [
+  // Ubiquitous (R4) — 65 material / 100 units
+  { name: 'Bitumens', tier: 'R4', volume: 10, batchSize: 100, material: 'Hydrocarbons',       matQty: 65 },
+  { name: 'Coesite',  tier: 'R4', volume: 10, batchSize: 100, material: 'Silicates',          matQty: 65 },
+  { name: 'Sylvite',  tier: 'R4', volume: 10, batchSize: 100, material: 'Evaporite Deposits', matQty: 65 },
+  { name: 'Zeolites', tier: 'R4', volume: 10, batchSize: 100, material: 'Atmospheric Gases',  matQty: 65 },
+  // Common (R8) — 40
+  { name: 'Cobaltite', tier: 'R8', volume: 10, batchSize: 100, material: 'Cobalt',   matQty: 40 },
+  { name: 'Euxenite',  tier: 'R8', volume: 10, batchSize: 100, material: 'Scandium', matQty: 40 },
+  { name: 'Scheelite', tier: 'R8', volume: 10, batchSize: 100, material: 'Tungsten', matQty: 40 },
+  { name: 'Titanite',  tier: 'R8', volume: 10, batchSize: 100, material: 'Titanium', matQty: 40 },
+  // Uncommon (R16) — 40
+  { name: 'Chromite',   tier: 'R16', volume: 10, batchSize: 100, material: 'Chromium', matQty: 40 },
+  { name: 'Otavite',    tier: 'R16', volume: 10, batchSize: 100, material: 'Cadmium',  matQty: 40 },
+  { name: 'Sperrylite', tier: 'R16', volume: 10, batchSize: 100, material: 'Platinum', matQty: 40 },
+  { name: 'Vanadinite', tier: 'R16', volume: 10, batchSize: 100, material: 'Vanadium', matQty: 40 },
+  // Rare (R32) — 50
+  { name: 'Carnotite', tier: 'R32', volume: 10, batchSize: 100, material: 'Technetium', matQty: 50 },
+  { name: 'Cinnabar',  tier: 'R32', volume: 10, batchSize: 100, material: 'Mercury',    matQty: 50 },
+  { name: 'Pollucite', tier: 'R32', volume: 10, batchSize: 100, material: 'Caesium',    matQty: 50 },
+  { name: 'Zircon',    tier: 'R32', volume: 10, batchSize: 100, material: 'Hafnium',    matQty: 50 },
+  // Exceptional (R64) — 22
+  { name: 'Loparite',  tier: 'R64', volume: 10, batchSize: 100, material: 'Promethium', matQty: 22 },
+  { name: 'Monazite',  tier: 'R64', volume: 10, batchSize: 100, material: 'Neodymium',  matQty: 22 },
+  { name: 'Xenotime',  tier: 'R64', volume: 10, batchSize: 100, material: 'Dysprosium', matQty: 22 },
+  { name: 'Ytterbite', tier: 'R64', volume: 10, batchSize: 100, material: 'Thulium',    matQty: 22 },
+];
+const MOON_TIER_COLORS = { R4: '#7d8fa3', R8: '#4ecbb0', R16: '#5b9bd5', R32: '#e3a84d', R64: '#c05c7e' };
+
+let _moonRefineEff = 72.36;
+let _moonSort      = { col: 'iskM3', dir: -1 };
+let _moonPrices    = {};
+let _moonLoading   = false;
+
+async function renderMoonCalculator(container) {
+  const accounts = await window.eveAPI.getAccounts().catch(() => []);
+  container.innerHTML = `
+    <div id="moonCalcWrap" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+                  padding:12px 16px;border-bottom:1px solid var(--border);
+                  background:var(--bg-card);flex-shrink:0;">
+        <span style="font-family:var(--mono);font-size:11px;color:var(--text-3);
+                     letter-spacing:0.1em;white-space:nowrap;">MOON CALCULATOR</span>
+        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;">
+          <label style="font-size:12px;color:var(--text-2);font-family:var(--mono);">REFINE EFF %</label>
+          <input id="moonRefineEff" type="number" min="0" max="100" step="0.01"
+                 value="${_moonRefineEff}"
+                 class="field-input" style="width:76px;padding:5px 8px;font-size:12px;flex-shrink:0;"
+                 title="Reprocessing efficiency — perfect skills no implant = 72.36%, T2 implant = 82.5%"/>
+          ${tradeToolbarHtml('moon', accounts)}
+          <button id="moonRefreshBtn" class="icon-btn" style="padding:5px 12px;font-size:12px;">⟳ REFRESH</button>
+        </div>
+        <div id="moonPriceAge" style="font-size:10px;color:var(--text-3);font-family:var(--mono);"></div>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;">
+        <table id="moonTable" style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="border-bottom:2px solid var(--border);background:var(--bg-card);position:sticky;top:0;z-index:1;">
+              <th class="moon-th" data-col="tier"     style="text-align:left;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">TIER ↕</th>
+              <th class="moon-th" data-col="name"     style="text-align:left;padding:10px 8px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">MOON ORE ↕</th>
+              <th class="moon-th" data-col="material" style="text-align:left;padding:10px 8px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">MATERIAL ↕</th>
+              <th class="moon-th" data-col="matPrice" style="text-align:right;padding:10px 8px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">MATERIAL/UNIT ↕</th>
+              <th class="moon-th" data-col="iskUnit"  style="text-align:right;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:0.1em;">REFINE ISK/UNIT ↕</th>
+              <th class="moon-th" data-col="iskM3"    style="text-align:right;padding:10px 14px;cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:0.1em;color:var(--accent);">REFINE ISK/M³ ↕</th>
+            </tr>
+          </thead>
+          <tbody id="moonTableBody">
+            <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-3);font-family:var(--mono);font-size:12px;">⬡ Fetching prices…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="padding:8px 16px;border-top:1px solid var(--border);background:var(--bg-card);font-size:10px;color:var(--text-3);font-family:var(--mono);flex-shrink:0;">
+        Values each moon ore by the moon material it reprocesses into, net of sales tax (+ broker fee for Sell/Split),
+        at your efficiency. Standard-mineral byproducts are not counted. Base yields per 100 units: R4 65 · R8/R16 40 · R32 50 · R64 22.
+      </div>
+    </div>`;
+
+  document.getElementById('moonRefineEff').addEventListener('change', e => {
+    _moonRefineEff = parseFloat(e.target.value) || 72.36;
+    buildMoonTable();
+  });
+  bindTradeToolbar('moon', () => loadMoonPrices(), () => buildMoonTable());
+  updateTradeTaxInfo('moon');
+  document.getElementById('moonRefreshBtn').addEventListener('click', () => loadMoonPrices());
+
+  document.querySelectorAll('#moonCalcWrap .moon-th').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (_moonSort.col === col) _moonSort.dir *= -1;
+      else { _moonSort.col = col; _moonSort.dir = -1; }
+      buildMoonTable();
+    });
+  });
+
+  await loadMoonPrices();
+}
+
+async function loadMoonPrices() {
+  if (_moonLoading) return;
+  _moonLoading = true;
+  const refreshBtn = document.getElementById('moonRefreshBtn');
+  if (refreshBtn) refreshBtn.disabled = true;
+  try {
+    const ids = [...new Set(Object.values(MOON_MATERIAL_IDS))];
+    const raw = await window.eveAPI.getHubPrices(ids, _trade.hub);
+    _moonPrices = raw || {};
+    const ageEl = document.getElementById('moonPriceAge');
+    if (ageEl) ageEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    buildMoonTable();
+  } catch (err) {
+    logToConsole(`Moon prices fetch failed: ${err.message}`, 'error');
+    const body = document.getElementById('moonTableBody');
+    if (body) body.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--danger);font-family:var(--mono);font-size:12px;">⚠ Failed to fetch prices: ${escHtml(err.message)}</td></tr>`;
+  } finally {
+    _moonLoading = false;
+    const btn = document.getElementById('moonRefreshBtn');
+    if (btn) btn.disabled = false;
+  }
+}
+
+function calcMoonRow(ore) {
+  const matPrice   = tradePrice(_moonPrices[MOON_MATERIAL_IDS[ore.material]]);
+  const iskPerUnit = TradeMath.reprocessUnitValue(ore.matQty, matPrice, _moonRefineEff / 100, ore.batchSize, tradeNetFactor());
+  const iskPerM3   = ore.volume > 0 ? iskPerUnit / ore.volume : 0;
+  return { matPrice, iskPerUnit, iskPerM3 };
+}
+
+function buildMoonTable() {
+  const body = document.getElementById('moonTableBody');
+  if (!body) return;
+  const tierOrder = { R4: 0, R8: 1, R16: 2, R32: 3, R64: 4 };
+  const rows = MOON_ORE_DATA.map(ore => ({ ore, ...calcMoonRow(ore) }));
+
+  const col = _moonSort.col, dir = _moonSort.dir;
+  rows.sort((a, b) => {
+    if      (col === 'name')     return dir * a.ore.name.localeCompare(b.ore.name);
+    else if (col === 'material') return dir * a.ore.material.localeCompare(b.ore.material);
+    else if (col === 'tier')     return dir * (tierOrder[a.ore.tier] - tierOrder[b.ore.tier]);
+    else if (col === 'matPrice') return dir * (a.matPrice   - b.matPrice);
+    else if (col === 'iskUnit')  return dir * (a.iskPerUnit  - b.iskPerUnit);
+    return dir * (a.iskPerM3 - b.iskPerM3);
+  });
+
+  const maxIskM3 = Math.max(...rows.map(r => r.iskPerM3), 1);
+  body.innerHTML = rows.map((r, i) => {
+    const { ore, matPrice, iskPerUnit, iskPerM3 } = r;
+    const tc    = MOON_TIER_COLORS[ore.tier] || 'var(--text-3)';
+    const isTop = i === 0;
+    const barW  = Math.round((iskPerM3 / maxIskM3) * 100);
+    const matId = MOON_MATERIAL_IDS[ore.material];
+    return `
+      <tr style="border-bottom:1px solid var(--border);background:${isTop ? 'rgba(255,255,255,0.03)' : 'transparent'};${isTop ? 'outline:1px solid var(--accent);' : ''}">
+        <td style="padding:10px 14px;white-space:nowrap;"><span style="font-family:var(--mono);font-size:10px;color:${tc};">${ore.tier}</span></td>
+        <td style="padding:10px 8px;color:var(--text-1);font-weight:600;">${escHtml(ore.name)}</td>
+        <td style="padding:10px 8px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <img src="https://images.evetech.net/types/${matId}/icon?size=32" onerror="this.onerror=null;this.style.display='none';" style="width:22px;height:22px;border-radius:3px;border:1px solid var(--border);flex-shrink:0;">
+            <span style="color:var(--text-2);">${escHtml(ore.material)}</span>
+          </div>
+        </td>
+        <td style="padding:10px 8px;text-align:right;font-family:var(--mono);color:var(--text-2);">${matPrice > 0 ? formatNumber(matPrice) : '—'}</td>
+        <td style="padding:10px 14px;text-align:right;font-family:var(--mono);color:var(--text-2);">${iskPerUnit > 0 ? formatNumber(iskPerUnit) : '—'}</td>
+        <td style="padding:10px 14px;text-align:right;">
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+            <div style="width:60px;height:4px;background:var(--bg-card);border-radius:2px;overflow:hidden;flex-shrink:0;">
+              <div style="height:100%;width:${barW}%;background:${isTop ? 'var(--accent)' : 'var(--text-3)'};border-radius:2px;"></div>
+            </div>
+            <span style="font-family:var(--mono);font-weight:700;color:${isTop ? 'var(--accent)' : 'var(--text-1)'};">${iskPerM3 > 0 ? formatNumber(iskPerM3) : '—'}</span>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
 }
 
 // ─── Moon Scan Reformatter ────────────────────────────────────────────────────
@@ -1772,6 +1964,131 @@ const ORE_DATA = [
   },
 ];
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Shared trade settings for the Ore / Ice / Gas calculators
+// ───────────────────────────────────────────────────────────────────────────
+// One state object drives all three calcs: which hub to price against, which
+// price method (sell/buy/split), and the market tax derived from the selected
+// character's Accounting + Broker Relations skills and NPC standings toward the
+// hub owner. Owner corp / faction IDs match the backend HUBS map in esi_ipc.js.
+const TRADE_HUB_META = {
+  jita:    { label: 'Jita',    ownerCorpId: 1000035, factionId: 500001 },
+  amarr:   { label: 'Amarr',   ownerCorpId: 1000086, factionId: 500003 },
+  dodixie: { label: 'Dodixie', ownerCorpId: 1000120, factionId: 500004 },
+  rens:    { label: 'Rens',    ownerCorpId: 1000049, factionId: 500002 },
+  hek:     { label: 'Hek',     ownerCorpId: 1000057, factionId: 500002 },
+};
+const TRADE_BASE_SALES_TAX  = 0.08;  // 8% base (TQ); −11% per Accounting level
+const TRADE_BASE_BROKER_FEE = 0.03;  // 3% base at NPC station; reduced by skill + standings
+
+// Persisted across calc re-renders within the session.
+let _trade = {
+  characterId: null,
+  hub:    'jita',
+  method: 'sell',           // 'sell' | 'buy' | 'split'
+  accounting: 5,            // defaults assume perfect skills until a char is chosen
+  brokerRelations: 5,
+  standings: {},            // { fromId: standing }
+  loaded: false,            // true once a real character profile has been pulled
+};
+
+// Thin wrappers over the pure TradeMath module (src/func/trade-math.js, loaded
+// before this file) — they read the shared _trade state and delegate the math so
+// it stays unit-testable under Node.
+function tradeSalesTax() {
+  return TradeMath.salesTax(_trade.accounting, TRADE_BASE_SALES_TAX);
+}
+function tradeBrokerFee() {
+  const meta = TRADE_HUB_META[_trade.hub] || TRADE_HUB_META.jita;
+  return TradeMath.brokerFee(
+    _trade.brokerRelations,
+    _trade.standings[meta.factionId]   || 0,
+    _trade.standings[meta.ownerCorpId] || 0,
+    TRADE_BASE_BROKER_FEE,
+  );
+}
+function tradeNetFactor() {
+  return TradeMath.netFactor(_trade.method, tradeSalesTax(), tradeBrokerFee());
+}
+function tradePrice(p) {
+  return TradeMath.pickPrice(p, _trade.method);
+}
+
+// Pull the selected character's trade profile (skills + standings) into _trade.
+async function loadTradeProfile() {
+  if (!_trade.characterId) { _trade.loaded = false; return; }
+  try {
+    const prof = await window.eveAPI.getTradeProfile(_trade.characterId);
+    if (prof) {
+      if (prof.accounting != null)      _trade.accounting      = prof.accounting;
+      if (prof.brokerRelations != null) _trade.brokerRelations = prof.brokerRelations;
+      _trade.standings = prof.standings || {};
+      _trade.loaded    = (prof.accounting != null);
+    }
+  } catch (_) { /* keep current defaults */ }
+}
+
+// Shared toolbar controls. `prefix` namespaces element ids per calculator.
+function tradeToolbarHtml(prefix, accounts) {
+  const charOpts = ['<option value="">Perfect skills</option>']
+    .concat((accounts || []).map(a =>
+      `<option value="${a.characterId}" ${String(a.characterId) === String(_trade.characterId) ? 'selected' : ''}>${escHtml(a.characterName || ('Char ' + a.characterId))}</option>`))
+    .join('');
+  const hubOpts = Object.entries(TRADE_HUB_META).map(([k, v]) =>
+    `<option value="${k}" ${k === _trade.hub ? 'selected' : ''}>${v.label}</option>`).join('');
+  const methodOpts = [['sell', 'Sell'], ['buy', 'Buy'], ['split', 'Split']].map(([k, l]) =>
+    `<option value="${k}" ${k === _trade.method ? 'selected' : ''}>${l}</option>`).join('');
+  // Compact, fixed-width selects so the controls sit inline on one row (like the
+  // cost-index toolbar) instead of stretching full-width and stacking.
+  const base = 'class="field-input" style="padding:5px 8px;font-size:12px;flex-shrink:0;';
+  return `
+    <select id="${prefix}Char"   ${base}width:150px;" title="Character — skills & standings drive the tax">${charOpts}</select>
+    <select id="${prefix}Hub"    ${base}width:96px;"  title="Trade hub (price source + broker standings)">${hubOpts}</select>
+    <select id="${prefix}Method" ${base}width:92px;"  title="Sell order / Buy order / Split">${methodOpts}</select>
+    <span id="${prefix}TaxInfo" style="font-size:10px;color:var(--text-3);font-family:var(--mono);white-space:nowrap;flex-shrink:0;"></span>`;
+}
+
+// Wire the shared toolbar. reloadPrices() refetches from the new hub; rebuildTable()
+// just recomputes with current prices.
+function bindTradeToolbar(prefix, reloadPrices, rebuildTable) {
+  const charSel   = document.getElementById(`${prefix}Char`);
+  const hubSel    = document.getElementById(`${prefix}Hub`);
+  const methodSel = document.getElementById(`${prefix}Method`);
+  if (charSel) charSel.addEventListener('change', async (e) => {
+    _trade.characterId = e.target.value || null;
+    if (_trade.characterId) {
+      await loadTradeProfile();
+    } else {
+      _trade.accounting = 5; _trade.brokerRelations = 5; _trade.standings = {}; _trade.loaded = false;
+    }
+    updateTradeTaxInfo(prefix);
+    rebuildTable();
+  });
+  if (hubSel) hubSel.addEventListener('change', (e) => {
+    _trade.hub = e.target.value || 'jita';
+    updateTradeTaxInfo(prefix);
+    reloadPrices();
+  });
+  if (methodSel) methodSel.addEventListener('change', (e) => {
+    _trade.method = e.target.value || 'sell';
+    updateTradeTaxInfo(prefix);
+    rebuildTable();
+  });
+}
+
+// Refresh the "Sales tax X% · Broker Y%" hint in a calculator toolbar.
+function updateTradeTaxInfo(prefix) {
+  const el = document.getElementById(`${prefix}TaxInfo`);
+  if (!el) return;
+  const st = (tradeSalesTax() * 100).toFixed(2);
+  const bf = (tradeBrokerFee() * 100).toFixed(2);
+  const brokerPart = _trade.method === 'buy' ? '' : ` · Broker ${bf}%`;
+  const note = _trade.characterId
+    ? (_trade.loaded ? '' : ' · sync char for live skills/standings')
+    : ' · perfect skills';
+  el.textContent = `Sales tax ${st}%${brokerPart}${note}`;
+}
+
 // Mineral type IDs (Jita prices fetched for these)
 const MINERAL_IDS = {
   Tritanium: 34,
@@ -1798,12 +2115,12 @@ const ORE_SELL_IDS = {
 
 // ── State for the ore calculator ─────────────────────────────────────────────
 let _oreRefineEff  = 72.36;   // % – the Fuzzwork default (perfect skills no implant)
-let _oreTaxRate    = 5;        // %
 let _oreSort       = { col: 'iskM3', dir: -1 };
 let _orePrices     = {};       // typeId → { sell, buy }
 let _oreLoading    = false;
 
 async function renderOreCalculator(container) {
+  const accounts = await window.eveAPI.getAccounts().catch(() => []);
   container.innerHTML = `
     <div id="oreCalcWrap" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
       <!-- toolbar -->
@@ -1811,17 +2128,14 @@ async function renderOreCalculator(container) {
                   padding:12px 16px;border-bottom:1px solid var(--border);
                   background:var(--bg-card);flex-shrink:0;">
         <span style="font-family:var(--mono);font-size:11px;color:var(--text-3);
-                     letter-spacing:0.1em;">ORE CALCULATOR · JITA 4-4</span>
-        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;">
+                     letter-spacing:0.1em;">ORE CALCULATOR</span>
+        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;">
           <label style="font-size:12px;color:var(--text-2);font-family:var(--mono);">REFINE EFF %</label>
           <input id="oreRefineEff" type="number" min="0" max="100" step="0.01"
                  value="${_oreRefineEff}"
                  class="field-input" style="width:76px;padding:5px 8px;font-size:12px;"
                  title="Refining efficiency (perfect skills + T2 implant ≈ 82.5%, NPC station max = 72.36%)"/>
-          <label style="font-size:12px;color:var(--text-2);font-family:var(--mono);">TAX %</label>
-          <input id="oreTaxRate" type="number" min="0" max="100" step="0.1"
-                 value="${_oreTaxRate}"
-                 class="field-input" style="width:58px;padding:5px 8px;font-size:12px;"/>
+          ${tradeToolbarHtml('ore', accounts)}
           <button id="oreRefreshBtn" class="icon-btn"
                   style="padding:5px 12px;font-size:12px;">⟳ REFRESH</button>
         </div>
@@ -1863,8 +2177,8 @@ async function renderOreCalculator(container) {
 
       <div style="padding:8px 16px;border-top:1px solid var(--border);background:var(--bg-card);
                   font-size:10px;color:var(--text-3);font-family:var(--mono);flex-shrink:0;">
-        Prices from Jita 4-4 CNAP (5% sell orders). Refine ISK assumes perfect skills with your efficiency setting.
-        Raw sell price = sell a single unit directly on the market.
+        Prices from the selected hub. ISK is net of sales tax (+ broker fee for Sell/Split).
+        Refine ISK uses your efficiency setting; Raw = sell the ore unprocessed.
       </div>
     </div>`;
 
@@ -1873,10 +2187,8 @@ async function renderOreCalculator(container) {
     _oreRefineEff = parseFloat(e.target.value) || 72.36;
     buildOreTable();
   });
-  document.getElementById('oreTaxRate').addEventListener('change', e => {
-    _oreTaxRate = parseFloat(e.target.value) || 5;
-    buildOreTable();
-  });
+  bindTradeToolbar('ore', () => loadOrePrices(), () => buildOreTable());
+  updateTradeTaxInfo('ore');
   document.getElementById('oreRefreshBtn').addEventListener('click', () => loadOrePrices());
 
   // Sortable column headers
@@ -1904,15 +2216,15 @@ async function loadOrePrices() {
     const oreIds     = Object.values(ORE_SELL_IDS);
     const allIds     = [...new Set([...mineralIds, ...oreIds])];
 
-    const raw = await window.eveAPI.getJitaPrices(allIds);
+    const raw = await window.eveAPI.getHubPrices(allIds, _trade.hub);
     _orePrices = raw || {};
 
     // Update mineral price strip
     for (const [mName, mId] of Object.entries(MINERAL_IDS)) {
       const el = document.getElementById(`mPrice_${mName}`);
       if (!el) continue;
-      const p = _orePrices[mId];
-      el.textContent = p?.sell > 0 ? formatNumber(p.sell) + ' ISK' : '—';
+      const price = tradePrice(_orePrices[mId]);
+      el.textContent = price > 0 ? formatNumber(price) + ' ISK' : '—';
     }
 
     const ageEl = document.getElementById('orePriceAge');
@@ -1933,27 +2245,22 @@ async function loadOrePrices() {
 }
 
 function calcOreRow(ore) {
-  const effFactor  = (_oreRefineEff / 100);
-  const taxFactor  = 1 - (_oreTaxRate / 100);
-  const batchM3    = ore.batchSize * ore.volume;
+  const effFactor = (_oreRefineEff / 100);
+  const netFactor = tradeNetFactor();               // sales tax (+ broker, per method)
 
-  // Mineral value for one batch after refining efficiency + tax
+  // Mineral value for one batch after refining efficiency + market fees
   let batchMineralISK = 0;
   for (const [mName, baseQty] of Object.entries(ore.minerals)) {
-    const mId    = MINERAL_IDS[mName];
-    const p      = _orePrices[mId];
-    const price  = p?.sell > 0 ? p.sell : (p?.buy || 0);
-    const actual = Math.floor(baseQty * effFactor);   // EVE floors refined minerals
-    batchMineralISK += actual * price * taxFactor;
+    const price  = tradePrice(_orePrices[MINERAL_IDS[mName]]);  // sell / buy / split
+    const actual = Math.floor(baseQty * effFactor);            // EVE floors refined minerals
+    batchMineralISK += actual * price * netFactor;
   }
 
   const iskPerUnit = batchMineralISK / ore.batchSize;
   const iskPerM3   = iskPerUnit / ore.volume;
 
-  // Raw ore sell price (per unit)
-  const rawId       = ORE_SELL_IDS[ore.name];
-  const rawP        = _orePrices[rawId];
-  const rawSellUnit = rawP?.sell > 0 ? rawP.sell : (rawP?.buy || 0);
+  // Raw ore sale proceeds (per unit), same method + fees as refined
+  const rawSellUnit = tradePrice(_orePrices[ORE_SELL_IDS[ore.name]]) * netFactor;
   const rawSellM3   = rawSellUnit / ore.volume;
 
   return { iskPerUnit, iskPerM3, rawSellUnit, rawSellM3 };
@@ -2184,12 +2491,12 @@ const ICE_SELL_IDS = Object.fromEntries(ICE_DATA.map(ice => [ice.name, ice.typeI
 
 // ── Ice calculator state ──────────────────────────────────────────────────────
 let _iceRefineEff = 72.36;
-let _iceTaxRate   = 5;
 let _iceSort      = { col: 'iskM3', dir: -1 };
 let _icePrices    = {};
 let _iceLoading   = false;
 
 async function renderIceCalculator(container) {
+  const accounts = await window.eveAPI.getAccounts().catch(() => []);
   container.innerHTML = `
     <div id="iceCalcWrap" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
 
@@ -2198,17 +2505,14 @@ async function renderIceCalculator(container) {
                   padding:12px 16px;border-bottom:1px solid var(--border);
                   background:var(--bg-card);flex-shrink:0;">
         <span style="font-family:var(--mono);font-size:11px;color:var(--text-3);
-                     letter-spacing:0.1em;">ICE CALCULATOR · JITA 4-4</span>
-        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;">
+                     letter-spacing:0.1em;">ICE CALCULATOR</span>
+        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;">
           <label style="font-size:12px;color:var(--text-2);font-family:var(--mono);">REFINE EFF %</label>
           <input id="iceRefineEff" type="number" min="0" max="100" step="0.01"
                  value="${_iceRefineEff}"
                  class="field-input" style="width:76px;padding:5px 8px;font-size:12px;"
                  title="Refining efficiency — perfect skills no implant = 72.36%, T2 implant = 82.5%"/>
-          <label style="font-size:12px;color:var(--text-2);font-family:var(--mono);">TAX %</label>
-          <input id="iceTaxRate" type="number" min="0" max="100" step="0.1"
-                 value="${_iceTaxRate}"
-                 class="field-input" style="width:58px;padding:5px 8px;font-size:12px;"/>
+          ${tradeToolbarHtml('ice', accounts)}
           <button id="iceRefreshBtn" class="icon-btn"
                   style="padding:5px 12px;font-size:12px;">⟳ REFRESH</button>
         </div>
@@ -2253,8 +2557,8 @@ async function renderIceCalculator(container) {
 
       <div style="padding:8px 16px;border-top:1px solid var(--border);background:var(--bg-card);
                   font-size:10px;color:var(--text-3);font-family:var(--mono);flex-shrink:0;">
-        Prices from Jita 4-4 CNAP (sell orders). Ice does not use efficiency loss — all products
-        are yielded at 100% of base quantity × your efficiency setting. Raw sell = sell unprocessed ice directly.
+        Prices from the selected hub, net of sales tax (+ broker fee for Sell/Split). Products are
+        yielded at base quantity × your efficiency setting. Raw = sell the ice unprocessed.
       </div>
     </div>`;
 
@@ -2263,10 +2567,8 @@ async function renderIceCalculator(container) {
     _iceRefineEff = parseFloat(e.target.value) || 72.36;
     buildIceTable();
   });
-  document.getElementById('iceTaxRate').addEventListener('change', e => {
-    _iceTaxRate = parseFloat(e.target.value) || 5;
-    buildIceTable();
-  });
+  bindTradeToolbar('ice', () => loadIcePrices(), () => buildIceTable());
+  updateTradeTaxInfo('ice');
   document.getElementById('iceRefreshBtn').addEventListener('click', () => loadIcePrices());
 
   // Sortable headers
@@ -2293,15 +2595,15 @@ async function loadIcePrices() {
     const rawIceIds  = Object.values(ICE_SELL_IDS);
     const allIds     = [...new Set([...productIds, ...rawIceIds])];
 
-    const raw = await window.eveAPI.getJitaPrices(allIds);
+    const raw = await window.eveAPI.getHubPrices(allIds, _trade.hub);
     _icePrices = raw || {};
 
     // Update product price strip
     for (const [pName, pId] of Object.entries(ICE_PRODUCT_IDS)) {
       const el = document.getElementById(`icePrice_${pName.replace(/ /g, '_')}`);
       if (!el) continue;
-      const p = _icePrices[pId];
-      el.textContent = p?.sell > 0 ? formatNumber(p.sell) + ' ISK' : '—';
+      const price = tradePrice(_icePrices[pId]);
+      el.textContent = price > 0 ? formatNumber(price) + ' ISK' : '—';
     }
 
     const ageEl = document.getElementById('icePriceAge');
@@ -2323,25 +2625,21 @@ async function loadIcePrices() {
 
 function calcIceRow(ice) {
   const effFactor = _iceRefineEff / 100;
-  const taxFactor = 1 - (_iceTaxRate / 100);
+  const netFactor = tradeNetFactor();             // sales tax (+ broker, per method)
 
-  // Ice refining: EVE floors the product quantities, then applies tax
+  // Ice refining: EVE floors the product quantities, then applies market fees
   let refineISK = 0;
   for (const [pName, baseQty] of Object.entries(ice.products)) {
-    const pId    = ICE_PRODUCT_IDS[pName];
-    const p      = _icePrices[pId];
-    const price  = p?.sell > 0 ? p.sell : (p?.buy || 0);
+    const price  = tradePrice(_icePrices[ICE_PRODUCT_IDS[pName]]);
     const actual = Math.floor(baseQty * effFactor);
-    refineISK   += actual * price * taxFactor;
+    refineISK   += actual * price * netFactor;
   }
 
   const iskPerUnit = refineISK;                   // batchSize = 1 for all ice
   const iskPerM3   = iskPerUnit / ice.volume;
 
-  // Raw sell price for the unrefined ice unit
-  const rawId       = ice.typeId;
-  const rawP        = _icePrices[rawId];
-  const rawSellUnit = rawP?.sell > 0 ? rawP.sell : (rawP?.buy || 0);
+  // Raw sale proceeds for the unrefined ice unit, same method + fees
+  const rawSellUnit = tradePrice(_icePrices[ice.typeId]) * netFactor;
   const rawSellM3   = rawSellUnit / ice.volume;
 
   return { iskPerUnit, iskPerM3, rawSellUnit, rawSellM3 };
@@ -2498,6 +2796,7 @@ let _gasPrices  = {};
 let _gasLoading = false;
 
 async function renderGasCalculator(container) {
+  const accounts = await window.eveAPI.getAccounts().catch(() => []);
   container.innerHTML = `
     <div id="gasCalcWrap" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
 
@@ -2506,8 +2805,9 @@ async function renderGasCalculator(container) {
                   padding:12px 16px;border-bottom:1px solid var(--border);
                   background:var(--bg-card);flex-shrink:0;">
         <span style="font-family:var(--mono);font-size:11px;color:var(--text-3);
-                     letter-spacing:0.1em;">GAS CALCULATOR · JITA 4-4</span>
-        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;">
+                     letter-spacing:0.1em;">GAS CALCULATOR</span>
+        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;">
+          ${tradeToolbarHtml('gas', accounts)}
           <button id="gasRefreshBtn" class="icon-btn"
                   style="padding:5px 12px;font-size:12px;">⟳ REFRESH</button>
         </div>
@@ -2559,7 +2859,7 @@ async function renderGasCalculator(container) {
 
       <div style="padding:8px 16px;border-top:1px solid var(--border);background:var(--bg-card);
                   font-size:10px;color:var(--text-3);font-family:var(--mono);flex-shrink:0;">
-        Prices from Jita 4-4 CNAP (sell orders). Gas is sold raw — no refining or tax applies.
+        Prices from the selected hub, net of sales tax (+ broker fee for Sell/Split). Gas is sold raw — no refining.
         ISK/Venture assumes a full ${VENTURE_HOLD_M3.toLocaleString()} m³ Venture gas hold.
       </div>
     </div>`;
@@ -2574,6 +2874,8 @@ async function renderGasCalculator(container) {
     });
   });
 
+  bindTradeToolbar('gas', () => loadGasPrices(), () => buildGasTable());
+  updateTradeTaxInfo('gas');
   document.getElementById('gasRefreshBtn').addEventListener('click', () => loadGasPrices());
 
   await loadGasPrices();
@@ -2587,7 +2889,7 @@ async function loadGasPrices() {
 
   try {
     const allIds = [...new Set(GAS_DATA.map(g => g.typeId))];
-    const raw    = await window.eveAPI.getJitaPrices(allIds);
+    const raw    = await window.eveAPI.getHubPrices(allIds, _trade.hub);
     _gasPrices   = raw || {};
 
     const ageEl = document.getElementById('gasPriceAge');
@@ -2612,8 +2914,7 @@ function buildGasTable() {
   if (!body) return;
 
   const rows = GAS_DATA.map(gas => {
-    const p           = _gasPrices[gas.typeId];
-    const iskPerUnit  = p?.sell > 0 ? p.sell : (p?.buy || 0);
+    const iskPerUnit  = tradePrice(_gasPrices[gas.typeId]) * tradeNetFactor();
     const iskPerM3    = gas.volume > 0 ? iskPerUnit / gas.volume : 0;
     const ventureUnits = Math.floor(VENTURE_HOLD_M3 / gas.volume);
     const iskVenture  = iskPerUnit * ventureUnits;

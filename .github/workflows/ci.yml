@@ -17,7 +17,7 @@ permissions:
 jobs:
   # ── Fast feedback: syntax check + dependency audit ──────────────────────────
   lint:
-    name: Lint & audit
+    name: Lint, test & audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +33,9 @@ jobs:
 
       - name: Syntax / lint check
         run: npm run lint
+
+      - name: Unit tests
+        run: node --test
 
       # Reports known vulnerabilities. Non-blocking: a new upstream advisory
       # shouldn't turn every PR red. Drop `continue-on-error` to make it a hard

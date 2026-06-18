@@ -24,6 +24,7 @@ const SCOPES = [
   'esi-location.read_ship_type.v1',
   'esi-planets.manage_planets.v1',
   'esi-characters.read_loyalty.v1',
+  'esi-characters.read_standings.v1',
   'esi-skills.read_skillqueue.v1',
   'esi-fleets.read_fleet.v1',
   'esi-ui.write_waypoint.v1',
